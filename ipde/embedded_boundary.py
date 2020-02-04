@@ -4,10 +4,12 @@ import fast_interp
 import finufftpy
 GSB = pybie2d.boundaries.global_smooth_boundary.global_smooth_boundary.Global_Smooth_Boundary
 PointSet = pybie2d.point_set.PointSet
-from near_finder.near_routines import gridpoints_near_points, gridpoints_near_curve, points_near_curve
+from near_finder.near_routines import gridpoints_near_points, gridpoints_near_curve, points_near_curve, points_near_curve_danger
 from near_finder.phys_routines import points_inside_curve
 from near_finder.coordinate_routines import compute_local_coordinates
 # from .utilities import affine_transformation, get_chebyshev_nodes, SimpleFourierFilter
+# from .heavisides import SlepianMollifier
+from ipde.heavisides import SlepianMollifier
 from ipde.utilities import affine_transformation, get_chebyshev_nodes, SimpleFourierFilter
 from qfs.two_d_qfs import QFS_Boundary
 
@@ -23,13 +25,14 @@ class EmbeddedPointPartition(object):
         For structured x, y
         """
         pass
-    def __init__(self, ebdy, x, y):
+    def __init__(self, ebdy, x, y, fix_r=False, danger_zone=None, gi=None):
         """
         For Unstructured x, y
         """
         self.ebdy = ebdy
         self.x_check = x
         self.y_check = y
+        self.fix_r = fix_r
         self.sh = x.shape
         self.x = x.ravel()
         self.y = y.ravel()
@@ -38,18 +41,32 @@ class EmbeddedPointPartition(object):
         self.by = self.ebdy.bdy.y
         self.width = self.ebdy.radial_width
         self.interior = self.ebdy.interior
+        # danger zone gives those points who need to have r checked
+        self.has_danger_zone = danger_zone is not None
+        if self.has_danger_zone:
+            self.danger_zone = danger_zone
+            self.gi = gi
         # find points near boundary
-        res = points_near_curve(self.bx, self.by, self.x, self.y, self.width)
+        if self.has_danger_zone:
+            res = points_near_curve_danger(self.bx, self.by, self.x, self.y, self.width, self.danger_zone, self.gi)
+        else:
+            res = points_near_curve(self.bx, self.by, self.x, self.y, self.width)
+        # extract results from near-curve finder
+        in_full_annulus, er, et, _ = res
         # find points inside/outside boundary
         w = points_inside_curve(self.x, self.y, res)
+        if self.fix_r:
+            fixit = in_full_annulus.copy()
+            fixit[in_full_annulus] = (er[in_full_annulus] > 0)
+            # fixit = np.logical_and(er > 0, in_full_annulus)
+            er[fixit] = 0.0
+            w[fixit] = True
         if self.interior:
             phys = w
             ext = np.logical_not(w)
         else:
             ext = w
             phys = np.logical_not(w)
-        # extract results from near-curve finder
-        in_full_annulus, er, et, _ = res
         # get the results (1: in annulus; 2: not in annulus, physical; 3: not in annulus, not physical)
         self.category1 = np.logical_and(in_full_annulus, phys)
         self.in_annulus = self.category1
@@ -136,10 +153,11 @@ class EmbeddedPointPartition(object):
         # total = np.sum(self.category1) + np.sum(self.category2) + np.sum(self.category3)
         # if total != self.in_annulus.size:
         #     raise Exception('Categorization of points does not add up')
-    def is_it_i(self, x, y):
+    def is_it_i(self, x, y, fix_r):
         x_is_i = x is self.x_check
         y_is_i = y is self.y_check
-        return x_is_i and y_is_i
+        r_is_i = fix_r == self.fix_r
+        return x_is_i and y_is_i and r_is_i
     def get_ia(self):
         return self.in_annulus, self.not_in_annulus
     def get_categories(self):
@@ -161,8 +179,11 @@ class EmbeddedPointPartition(object):
     def reshape(self, out):
         return out.reshape(self.sh)
 
+def setit(name, dictionary, default):
+    return dictionary[name] if name in dictionary else default
+
 class EmbeddedBoundary(object):
-    def __init__(self, bdy, interior, M, h, pad_zone, heaviside):
+    def __init__(self, bdy, interior, M, h, **kwargs):
         """
         Instantiate an EmbeddedBoundary object
 
@@ -174,28 +195,44 @@ class EmbeddedBoundary(object):
             number of modes used to describe radial grid
         h (required):
             gridspacing for radial grid (in radial direction)
-        pad_zone (required):
-            extra space, in units of h, to protect boundary from
-            the rolloff functions
-            (note that the gridspacing is deferred until a grid is registered)
-        heaviside (required):
-            regularized Heaviside function (defined on [-Inf, Inf])
-            must return 0 for x =< -1, 1 for x >= 1
+
+        accepted kwargs:
+            pad_zone:
+                extra space, in units of h, to protect boundary from
+                the rolloff functions
+                (note that the gridspacing is deferred until a grid is registered)
+                DEFAULT VALUE: 0
+            heaviside:
+                regularized Heaviside function (defined on [-Inf, Inf])
+                must return 0 for x =< -1, 1 for x >= 1
+                DEFAULT VALUE: SlepianMollifier(2*M)
+            coordinate_tolerance:
+                tolerance used when finding local coordinates
+                DEFAULT VALUE: 1e-14
+            qfs_tolerance:
+                tolerance used when computing effective surfaces for qfs
+                DEFAULT VALUE: 1e-12
+            qfs_fsuf:
+                forced oversampling in qfs (useful for kernels with rapid decay)
+                DEFAULT VALUE: None
+            coordinate_scheme:
+                interpolation scheme used for coordinate solving
+
         """
         self.bdy = bdy
         self.interior = interior
         self.M = M
         self.h = h
-        self.pad_zone = pad_zone
-        self.heaviside = heaviside
+        self.pad_zone             = setit('pad_zone',             kwargs, 0    )
+        self.coordinate_tolerance = setit('coordinate_tolerance', kwargs, 1e-10)
+        self.qfs_tolerance        = setit('qfs_tolerance',        kwargs, 1e-10)
+        self.qfs_fsuf             = setit('qfs_fsuf',             kwargs, None )
+        self.coordinate_scheme    = setit('coordinate_scheme',    kwargs, 'nufft')
+        # do this one differently to avoid constructing SlepianMollifier if not needed
+        self.heaviside = kwargs['heaviside'] if 'heaviside' in kwargs else SlepianMollifier(2*self.M)
+        # parameters that depend on other parameters
         self.radial_width = self.M*self.h
         self.heaviside_width = self.radial_width - self.pad_zone*self.h
-
-        # default values for tolerances (can be changed with set_tolerance)
-        self.tolerances = {
-            'coordinates' : 1e-14,
-            'qfs'         : 1e-14,
-        }
 
         # construct radial grid
         self._generate_radial_grid()
@@ -213,7 +250,7 @@ class EmbeddedBoundary(object):
         self.near_radial_guess_inds = \
             np.tile(np.arange(self.bdy.N), self.M).reshape(self.M, self.bdy.N)
 
-    def register_grid(self, grid, verbose=False):
+    def register_grid(self, grid, danger_zone_distance=None, verbose=False):
         """
         Register a grid object
 
@@ -229,8 +266,8 @@ class EmbeddedBoundary(object):
         
         # find coords for everything within radial_width
         out = gridpoints_near_curve(self.bdy.x, self.bdy.y, self.grid.xv, 
-                self.grid.yv, self.radial_width,
-                tol=self.tolerances['coordinates'], verbose=verbose)
+                self.grid.yv, self.radial_width, interpolation_scheme=self.coordinate_scheme,
+                tol=self.coordinate_tolerance, verbose=verbose)
 
         # find points inside of the curve
         inside = points_inside_curve(self.grid.xg, self.grid.yg, out)
@@ -272,6 +309,25 @@ class EmbeddedBoundary(object):
         self.grid_step = np.zeros_like(self.grid.xg)
         self.grid_step[self.phys] = 1.0
         self.grid_step[self.grid_in_annulus] = self.grid_to_radial_step     
+        arts = affine_transformation(self.radial_rv, lb, 0, -1, 1, use_numexpr=True)
+        self.radial_cutoff = self.heaviside(arts)
+
+        if danger_zone_distance != None:
+            out = gridpoints_near_curve(self.bdy.x, self.bdy.y, self.grid.xv, 
+                    self.grid.yv, self.radial_width+danger_zone_distance, interpolation_scheme=self.coordinate_scheme,
+                    tol=self.coordinate_tolerance, verbose=verbose)
+            ia = out[0]
+            r = out[1][ia]
+            ia_good = r <= 0 if self.interior else r >= 0
+            in_danger_zone = ia.copy()
+            in_danger_zone[ia] = ia_good
+            self.grid_in_danger_zone = in_danger_zone
+            # get correct vector needed
+            rr = np.ones(np.prod(self.radial_shape), dtype=bool)
+            self.in_danger_zone = np.concatenate([in_danger_zone[phys_na], rr])
+            # now get guess indeces
+            gi = (out[2]//self.bdy.dt).astype(int)
+            self.guess_inds = np.concatenate([gi[phys_na], self.near_radial_guess_inds.ravel()])
 
     ############################################################################
     # Functions relating to the radial grid
@@ -337,6 +393,7 @@ class EmbeddedBoundary(object):
         self.chebyshev_interp_f_to_bdy = w
         # chebyshev interpolation of normal  derivative->bdy matrix
         self.chebyshev_interp_df_dn_to_bdy = self.chebyshev_interp_f_to_bdy.dot(self.D00)
+        self.chebyshev_interp_df_dn2_to_bdy = self.chebyshev_interp_f_to_bdy.dot(self.D00.dot(self.D00))
         # compute the approximate radius
         self.bdy_centroid_x = np.mean(self.bdy.x)
         self.bdy_centroid_y = np.mean(self.bdy.y)
@@ -354,6 +411,8 @@ class EmbeddedBoundary(object):
         return self.chebyshev_interp_f_to_bdy.dot(f)
     def interpolate_radial_to_boundary_normal_derivative(self, f):
         return self.chebyshev_interp_df_dn_to_bdy.dot(f)
+    def interpolate_radial_to_boundary_normal_derivative2(self, f):
+        return self.chebyshev_interp_df_dn2_to_bdy.dot(f)
     def interpolate_grid_to_interface(self, f, order=3):
         if order == np.Inf:
             return self.nufft_interpolate_grid_to_interface(f)
@@ -403,6 +462,16 @@ class EmbeddedBoundary(object):
         vals = out.real/np.prod(funch.shape)
         if f is not None: f[self.grid_in_annulus] = vals
         return vals
+    def full_merge(self, f, fr, order=5):
+        f1 = f*self.grid_step
+        f2 = f*0.0
+        self.interpolate_radial_to_grid(fr, f2)
+        f2 = f2*(1-self.grid_step)
+        gia = self.grid_in_annulus
+        f[gia] = f1[gia] + f2[gia]
+        fr1 = fr*self.radial_cutoff[:,None]
+        fr2 = self.interpolate_grid_to_radial(f*self.grid_step, order)
+        fr[:] = fr1 + fr2
     def merge_grids(self, f, fr):
         f1 = f*self.grid_step
         f2 = f*0.0
@@ -410,19 +479,19 @@ class EmbeddedBoundary(object):
         f2 = f2*(1-self.grid_step)
         gia = self.grid_in_annulus
         f[gia] = f1[gia] + f2[gia]
-    def get_interpolation_key(self, x, y):
-        here = [p.is_it_i(x, y) for p in self.registered_partitions]
+    def get_interpolation_key(self, x, y, fix_r=False, danger_zone=None, gi=None):
+        here = [p.is_it_i(x, y, fix_r) for p in self.registered_partitions]
         where = np.where(here)[0]
         if len(where) > 0:
             key = where[0]
         else:
-            key = self._register_points(x, y)
+            key = self._register_points(x, y, fix_r, danger_zone, gi)
         return key
-    def register_points(self, x, y):
-        return self.get_interpolation_key(x, y)
-    def _register_points(self, x, y):
+    def register_points(self, x, y, fix_r=False, danger_zone=None, gi=None):
+        return self.get_interpolation_key(x, y, fix_r, danger_zone, gi)
+    def _register_points(self, x, y, fix_r=False, danger_zone=None, gi=None):
         k = len(self.registered_partitions)
-        p = EmbeddedPointPartition(self, x, y)
+        p = EmbeddedPointPartition(self, x, y, fix_r, danger_zone, gi)
         self.registered_partitions.append(p)
         return k
     def interpolate_radial_to_points(self, fr, x, y):
@@ -441,8 +510,8 @@ class EmbeddedBoundary(object):
         out[ia] = vals
         out[oa] = np.nan
         return p.reshape(out)
-    def interpolate_to_points(self, ff, x, y):
-        key = self.get_interpolation_key(x, y)
+    def interpolate_to_points(self, ff, x, y, fix_r=False, danger_zone=None, gi=None):
+        key = self.get_interpolation_key(x, y, fix_r, danger_zone, gi)
         p = self.registered_partitions[key]
         # get the categories
         c1, c2, c3 = p.get_categories()
@@ -468,7 +537,7 @@ class EmbeddedBoundary(object):
             lbds = [self.grid.x_bounds[0], self.grid.y_bounds[0]]
             ubds = [self.grid.x_bounds[1], self.grid.y_bounds[1]]
             hs =   [self.grid.xh, self.grid.yh]
-            interp = fast_interp.interp2d(lbds, ubds, hs, f, k=5, p=[True, True])
+            interp = fast_interp.interp2d(lbds, ubds, hs, f, k=7, p=[True, True])
             output[c2] = interp(x[c2], y[c2])
         # fill in those that are not in the physical domain with nan
         if c3n > 0:
@@ -492,6 +561,11 @@ class EmbeddedBoundary(object):
         fx = fr*nx + ft*tx
         fy = fr*ny + ft*ty
         return fx, fy
+    def gradient2(self, fx, fy, fr):
+        fxr, fyr = self.radial_grid_derivatives(fr)
+        self.interpolate_radial_to_grid(fxr, fx)
+        self.interpolate_radial_to_grid(fyr, fy)
+        return fxr, fyr
     def gradient(self, f, fr, xd_func, yd_func):
         # compute gradient on the background grid
         fx = xd_func(f)
@@ -522,9 +596,10 @@ class EmbeddedBoundary(object):
     ############################################################################
     # Construct the QFS boundaries for both the boundary and the interface
     def _generate_qfs_boundaries(self):
-        eps = self.tolerances['qfs']
-        self.bdy_qfs = QFS_Boundary(self.bdy, eps=eps)
-        self.interface_qfs = QFS_Boundary(self.interface, eps=eps)
+        eps  = self.qfs_tolerance
+        fsuf = self.qfs_fsuf
+        self.bdy_qfs = QFS_Boundary(self.bdy, eps=eps, forced_source_upsampling_factor=fsuf)
+        self.interface_qfs = QFS_Boundary(self.interface, eps=eps, forced_source_upsampling_factor=fsuf)
         # collect interface relevant sources
         q = self.interface_qfs
         # these are sources for evaluating from interface out of the annulus

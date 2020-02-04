@@ -12,6 +12,7 @@ class ScalarSolver(object):
         self.helpers = []
         for ebdy, AS in zip(self.ebdyc.ebdys, AS_list):
             self.helpers.append(self._get_helper(ebdy, AS))
+        self.AS_list = [helper.annular_solver for helper in self.helpers]
         # compute necessary spectral operators
         self.grid = self.ebdyc.grid
         self.kx, self.ky = self.ebdyc.kx, self.ebdyc.ky
@@ -39,8 +40,8 @@ class ScalarSolver(object):
             self.dx = lambda x: fourier(x, self.ikx)
             self.dy = lambda x: fourier(x, self.iky)
         else:
-            self.dx = lambda x: fd_x_4(x, self.ebdy.grid.xh)
-            self.dy = lambda x: fd_y_4(x, self.ebdy.grid.yh)
+            self.dx = lambda x: fd_x_4(x, self.ebdyc.grid.xh)
+            self.dy = lambda x: fd_y_4(x, self.ebdyc.grid.yh)
     def get_boundary_values(self, urs):
         use_ef = type(urs) == EmbeddedFunction
         if use_ef:

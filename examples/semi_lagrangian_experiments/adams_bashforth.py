@@ -23,7 +23,7 @@ MH_Layer_Apply = pybie2d.kernels.high_level.modified_helmholtz.Modified_Helmholt
 Test semi-lagrangian solve...
 """
 
-max_time          = 6.0        # time to run to
+max_time          = 3.0        # time to run to
 reaction_value    = 0.5        # value for reaction term
 const_factor      = 0.5        # constant advection velocity
 diff_factor       = 0.7        # non-constant advection velocity
@@ -33,7 +33,7 @@ grid_upsampling   = 2          # upsampling of grid relative to boundary
 radial_upsampling = 2          # how much to upsample cheb grid by (relative to background)
 M                 = 12         # number of chebyshev modes
 pad_zone          = 0          # padding in radial grid (typically set to 0 for spectral methods)
-dt                = 0.1/2/2/2/2/2      # timestep
+dt                = 0.1/2      # timestep
 solver_type       = 'fourth' # 'spectral' or 'fourth'
 qfs_fsuf          = 4          # forced upsampling for QFS
 coordinate_scheme = 'polyi'    # interpolation scheme for coordinate finding ('polyi' or 'nufft')
@@ -859,7 +859,7 @@ if False:
     diffs_bdf_300_24_2_2 = [np.nan, 4.42e-03, 1.02e-03, 2.55e-04, 6.31e-05]
 
     ##### polyi; fourth; pad=0; fsuf=4; tmax=1.1
-    diffs_bdf_200_12_2_2 = [np.nan, 1.83e-04, 4.19e-05, ]
+    diffs_bdf_200_12_2_2 = [np.nan, 8.56e-03, 4.37e-03, 1.83e-03, 3.37e-02, 2.85e-01]
 
     ##### polyi; fourth; pad=0; fsuf=4; tmax=6.0 (nice and smooth!)
     diffs_bdf_200_12_2_2 = [np.nan, 1.83e-04, 4.19e-05, 1.58e-04, 'SMOOTH!']

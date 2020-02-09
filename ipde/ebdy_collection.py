@@ -19,6 +19,112 @@ def merge_sources(src_list):
     p.normal_y = np.concatenate([src.normal_y for src in src_list])
     return p
 
+class EmbeddedPointPartition(object):
+    """
+    Partition the points (x, y), which need to have no structure
+
+    In particular, we separate the points into:
+        1) physical / exterior points
+        2) physical+not in any annulus; physical+in an annulus; exterior
+        3) physical+not in any annulus; physical+in annulus 1;
+            physical+in annulus 2; ...; physical + in annulus n; exterior
+    """
+    def __init__(self, ebdyc, x, y, fix_r=False, danger_zone=None, gi=None):
+        self.ebdy = ebdy
+        self.x_check = x
+        self.y_check = y
+        self.fix_r = fix_r
+        self.sh = x.shape
+        self.x = x.ravel()
+        self.y = y.ravel()
+        self.size = self.x.size
+        self.bx = self.ebdy.bdy.x
+        self.by = self.ebdy.bdy.y
+        self.width = self.ebdy.radial_width
+        self.interior = self.ebdy.interior
+        # danger zone gives those points who need to have r checked
+        self.has_danger_zone = danger_zone is not None
+        if self.has_danger_zone:
+            self.danger_zone = danger_zone
+            self.gi = gi
+        # find points near boundary
+        if self.has_danger_zone:
+            res = points_near_curve(self.bx, self.by, self.x, self.y, self.width, self.danger_zone, self.gi)
+            # res = points_near_curve_danger(self.bx, self.by, self.x, self.y, self.width, self.danger_zone, self.gi)
+        else:
+            res = points_near_curve(self.bx, self.by, self.x, self.y, self.width)
+        # extract results from near-curve finder
+        in_full_annulus, er, et, _ = res
+        # find points inside/outside boundary
+        w = points_inside_curve(self.x, self.y, res)
+        if self.fix_r:
+            fixit = in_full_annulus.copy()
+            fixit[in_full_annulus] = (er[in_full_annulus] > 0)
+            # fixit = np.logical_and(er > 0, in_full_annulus)
+            er[fixit] = 0.0
+            w[fixit] = True
+        if self.interior:
+            phys = w
+            ext = np.logical_not(w)
+        else:
+            ext = w
+            phys = np.logical_not(w)
+        # get the results (1: in annulus; 2: not in annulus, physical; 3: not in annulus, not physical)
+        self.category1 = np.logical_and(in_full_annulus, phys)
+        self.in_annulus = self.category1
+        self.not_in_annulus = np.logical_not(self.in_annulus)
+        self.category2 = np.logical_and(self.not_in_annulus, phys)
+        self.category3 = np.logical_and(self.not_in_annulus, ext)
+        self.category1_N = np.sum(self.category1)
+        self.category2_N = np.sum(self.category2)
+        self.category3_N = np.sum(self.category3)
+        # spot check this
+        total = np.sum(self.category1) + np.sum(self.category2) + np.sum(self.category3)
+        if total != self.in_annulus.size:
+            raise Exception('Categorization of points does not add up')
+        # get shortened r and t vectors for those worth interpolating to
+        self.good_r = er[self.in_annulus]
+        self.good_size = self.good_r.size
+        # transform the r values
+        lb = -self.width if self.interior else 0.0
+        ub = 0.0 if self.interior else self.width
+        self.good_r_transf = np.arccos(affine_transformation(self.good_r, lb, ub, 1.0, -1.0, use_numexpr=True))
+        # store the theta values
+        self.good_t = et[self.in_annulus]
+
+        # shortened r vectors for category 3
+        self.test_r = er[self.category3]
+        self.test_t = et[self.category3]
+        # need the full r, actually....
+        self.full_r = er
+        self.full_t = et
+    def is_it_i(self, x, y, fix_r):
+        x_is_i = x is self.x_check
+        y_is_i = y is self.y_check
+        r_is_i = fix_r == self.fix_r
+        return x_is_i and y_is_i and r_is_i
+    def get_ia(self):
+        return self.in_annulus, self.not_in_annulus
+    def get_categories(self):
+        return self.category1, self.category2, self.category3
+    def get_category_Ns(self):
+        return self.category1_N, self.category2_N, self.category3_N
+    def get_points_in_category(self, category):
+        if category == 1:
+            sel = self.category1
+        elif category == 2:
+            sel = self.category2
+        elif category == 3:
+            sel = self.category3
+        else:
+            raise Exception('Category must be 1, 2, or 3.')
+        return self.x[sel], self.y[sel]
+    def get_ssrt(self):
+        return self.size, self.good_size, self.good_r_transf, self.good_t
+    def reshape(self, out):
+        return out.reshape(self.sh)
+
+
 class EmbeddedBoundaryCollection(object):
     def __init__(self, ebdy_list):
         """
@@ -48,7 +154,7 @@ class EmbeddedBoundaryCollection(object):
             for ei, ebdy in enumerate(self.ebdys):
                 if verbose:
                     print('Regisgering ebdy #', ei+1, 'of', self.N)
-                ebdy.register_grid(self.grid, danger_zone_distance, verbose)
+                ebdy.register_grid(self.grid, danger_zone_distance=danger_zone_distance, verbose=verbose)
 
         # compute some basic things so they don't have to be redone
         grid = self.ebdys[0].grid

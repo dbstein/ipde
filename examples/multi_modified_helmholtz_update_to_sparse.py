@@ -18,11 +18,11 @@ MH_Layer_Apply = pybie2d.kernels.high_level.modified_helmholtz.Modified_Helmholt
 
 import time
 
-nb = 400
+nb = 1600
 helmholtz_k = 5.0
-M = 8
+M = 32
 pad_zone = 0
-verbose = False
+verbose = True
 plot = True
 reparametrize = True
 slepian_r = 1.5*M
@@ -53,7 +53,7 @@ ng = 2*int(0.5*7//bh)
 grid = Grid([-3.5, 3.5], ng, [-3.5, 3.5], ng, x_endpoints=[True, False], y_endpoints=[True, False])
 # construct embedded boundary
 bdys = [bdy1, bdy2, bdy3]
-kwa = {'pad_zone':pad_zone, 'heaviside':MOL.step, 'coordinate_scheme':'polyi'}
+kwa = {'pad_zone':pad_zone, 'heaviside':MOL.step, 'coordinate_scheme':'nufft'}
 ebdys = [EmbeddedBoundary(bdy, bdy is bdy1, M, bh, **kwa) for bdy in bdys]
 ebdyc = EmbeddedBoundaryCollection(ebdys)
 # register the grid
@@ -69,7 +69,7 @@ for i in range(3):
 ################################################################################
 # Get solution, forces, BCs
 
-k = 20*np.pi/7
+k = 2*np.pi/7
 
 solution_func = lambda x, y: np.exp(np.sin(k*x))*np.sin(k*y)
 force_func = lambda x, y: helmholtz_k**2*solution_func(x, y) - k**2*np.exp(np.sin(k*x))*np.sin(k*y)*(np.cos(k*x)**2-np.sin(k*x)-1.0)

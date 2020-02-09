@@ -192,100 +192,6 @@ class EmbeddedBoundary(object):
         self.near_radial_guess_inds = \
             np.tile(np.arange(self.bdy.N), self.M).reshape(self.M, self.bdy.N)
 
-    def register_grid(self, grid, phys=None, danger_zone_distance=None, verbose=False):
-        """
-        Register a grid object
-
-        grid (required):
-            grid of type(Grid) from pybie2d (see pybie2d doc)
-        verbose (optional):
-            bool, whether to pass verbose output onto gridpoints_near_curve
-        """
-        self.grid = grid
-        
-        ########################################################################
-        # Locate grid points in annulus/curve and compute coordinates
-        
-        # find coords for everything within radial_width
-        out = gridpoints_near_curve_sparse(self.bdy.x, self.bdy.y, self.grid.xv, 
-                self.grid.yv, self.radial_width, interpolation_scheme=self.coordinate_scheme,
-                tol=self.coordinate_tolerance, verbose=verbose)
-
-        # find points inside of the curve
-        if phys == None and self.interior:
-            self.phys = np.zeros(self.grid.shape, dtype=bool)
-        elif phys == None and not self.interior:
-            self.phys = np.zeros(self.grid.shape, dtype=bool)
-        points_inside_curve_update(self.grid.xv, self.grid.yv, out, self.phys, inside=self.interior)
-        self.ext = np.logical_not(self.phys)
-
-        # wrangle output from gridpoints_near_curve
-        iax = out[0]
-        iay = out[1]
-        r = out[2]
-        t = out[3]
-        ia_good = r <= 0 if self.interior else r >= 0
-        # reduce to the good ones
-        iax = iax[ia_good]
-        iay = iay[ia_good]
-        r   = r  [ia_good]
-        t   = t  [ia_good]
-
-        # construct some internal variables
-        self.grid_in_annulus = np.zeros(self.grid.shape, dtype=bool)
-        self.grid_in_annulus[iax, iay] = True
-        self.grid_not_in_annulus = np.logical_not(self.grid_in_annulus)
-
-        # save coordinate values for those points that are in annulus
-        self.grid_ia_xind = iax
-        self.grid_ia_yind = iay
-        self.grid_ia_x = self.grid.xv[iax]
-        self.grid_ia_y = self.grid.yv[iay]
-        self.grid_ia_r = r
-        self.grid_ia_t = t
-        # for use in NUFFT interpolation
-        lb = -self.radial_width if self.interior else 0.0
-        ub = 0.0 if self.interior else self.radial_width
-        self.grid_ia_r_transf = np.arccos(affine_transformation(self.grid_ia_r, lb, ub, 1.0, -1.0, use_numexpr=True))
-        self.interface_x_transf = affine_transformation(self.interface.x, self.grid.x_bounds[0], self.grid.x_bounds[1], 0.0, 2*np.pi, use_numexpr=True)
-        self.interface_y_transf = affine_transformation(self.interface.y, self.grid.y_bounds[0], self.grid.y_bounds[1], 0.0, 2*np.pi, use_numexpr=True)
-
-        # get physical points that aren't in annulus
-        phys_na = np.logical_and(self.phys, self.grid_not_in_annulus)
-
-        ########################################################################
-        # Compute regularized Heaviside functions for coupling grids
-
-        lb = -self.heaviside_width if self.interior else self.heaviside_width
-        grts = affine_transformation(self.grid_ia_r, lb, 0, -1, 1, use_numexpr=True)
-        self.grid_to_radial_step = 1.0 - self.heaviside(grts)
-        self.grid_step = np.zeros_like(self.grid.xg)
-        self.grid_step[self.phys] = 1.0
-        self.grid_step[self.grid_ia_xind, self.grid_ia_yind] = self.grid_to_radial_step     
-        arts = affine_transformation(self.radial_rv, lb, 0, -1, 1, use_numexpr=True)
-        self.radial_cutoff = self.heaviside(arts)
-
-        # we should be able to get rid of this one!
-        if danger_zone_distance != None:
-            out = gridpoints_near_curve_sparse(self.bdy.x, self.bdy.y, self.grid.xv, 
-                    self.grid.yv, self.radial_width+danger_zone_distance, interpolation_scheme=self.coordinate_scheme,
-                    tol=self.coordinate_tolerance, verbose=verbose)
-            iax = out[0]
-            iay = out[1]
-            r = out[2]
-            t = out[3]
-            ia_good = r <= 0 if self.interior else r >= 0
-            iax = iax[ia_good]
-            iay = iay[ia_good]
-            self.grid_in_danger_zone_x = iax
-            self.grid_in_danger_zone_y = iay
-            # get correct vector needed
-            rr = np.ones(np.prod(self.radial_shape), dtype=bool)
-            self.in_danger_zone = np.concatenate([in_danger_zone[phys_na], rr])
-            # now get guess indeces
-            gi = (t[ia_good]//self.bdy.dt).astype(int)
-            self.guess_inds = np.concatenate([gi[phys_na], self.near_radial_guess_inds.ravel()])
-
     def register_grid(self, grid, danger_zone_distance=None, verbose=False):
         """
         Register a grid object
@@ -496,8 +402,7 @@ class EmbeddedBoundary(object):
         out = np.zeros(self.grid_ia_r.shape[0], dtype=complex)
         diagnostic = finufftpy.nufft2d2(self.grid_ia_r_transf, self.grid_ia_t, out, 1, 1e-14, funch, modeord=1)
         vals = out.real/np.prod(funch.shape)
-        # if f is not None: f[self.grid_in_annulus] = vals
-        if f is not None: f[self.grid_ia_xind, self.grid_ia_yind] = vals
+        if f is not None: f[self.grid_in_annulus] = vals
         return vals
     def full_merge(self, f, fr, order=5):
         f1 = f*self.grid_step

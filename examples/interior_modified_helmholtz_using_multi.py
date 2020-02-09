@@ -38,7 +38,7 @@ def tornberg_bdy(N, n=1, R=1, cl=[], cv=[], dl=[], dv=[], a=0, b=0):
 	out += (a + 1j*b)
 	return out
 
-nb = 200
+nb = 300
 # M = min(30, 4*int(nb/100))
 M = 8
 helmholtz_k = 2.0
@@ -63,7 +63,7 @@ ng = 2*int(1.0*2.4//bh)
 # construct a grid
 grid = Grid([-1.2, 1.2], ng, [-1.2, 1.2], ng, x_endpoints=[True, False], y_endpoints=[True, False])
 # construct embedded boundary
-ebdy = EmbeddedBoundary(bdy, True, M, bh*1, pad_zone, MOL.step)
+ebdy = EmbeddedBoundary(bdy, True, M, bh*1, pad_zone=pad_zone, heaviside=MOL.step)
 ebdys = [ebdy,]
 ebdyc = EmbeddedBoundaryCollection([ebdy,])
 # register the grid

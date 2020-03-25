@@ -58,6 +58,7 @@ class ScalarSolver(object):
     def __call__(self, f, fr_list=None, **kwargs):
         """
         If fr_list is None, then f should be of type EmbeddedFunction
+        (the fr_list option is to be deprecated...)
 
         Returns either EmbeddedFunction or u/ur_list
         """
@@ -65,22 +66,25 @@ class ScalarSolver(object):
         if fr_list is None and not use_ef:
             raise Exception('If fr_list is not provided, f must be of type EmbeddedFunction')
         if use_ef:
-            f, _, fr_list = f.get_components()
+            fc = f.get_smoothed_grid_value()
+            fr_list = f.radial_value_list
+        else:
+            fc = f*self.grid_step
         # get the grid-based solution
-        fc = f*self.grid_step
         uc = self._grid_solve(fc)
         # interpolate the solution to the interface
-        bvs = self.ebdyc.interpolate_grid_to_interface(uc, order=self.interpolation_order)
+        bvs = self.ebdyc.interpolate_grid_to_interface(uc, order=self.interpolation_order, cutoff=False)
         # get the grid solution's derivatives and interpolate to interface
         ucx, ucy = self.dx(uc), self.dy(uc)
-        bxs = self.ebdyc.interpolate_grid_to_interface(ucx, order=self.interpolation_order)
-        bys = self.ebdyc.interpolate_grid_to_interface(ucy, order=self.interpolation_order)
+        bxs = self.ebdyc.interpolate_grid_to_interface(ucx, order=self.interpolation_order, cutoff=False)
+        bys = self.ebdyc.interpolate_grid_to_interface(ucy, order=self.interpolation_order, cutoff=False)
         # convert these from lists to vectors
         bvl, bxl, byl = self.ebdyc.v2l(bvs), self.ebdyc.v2l(bxs), self.ebdyc.v2l(bys)
         # compute the needed layer potentials
         sigmag_list = []
         for helper, fr, bv, bx, by in zip(self.helpers, fr_list, bvl, bxl, byl):
             sigmag_list.append(helper(fr, bv, bx, by, **kwargs))
+        self.iteration_counts = [helper.iterations_last_call for helper in self.helpers]
         # we now need to evaluate this onto the grid / interface points
         sigmag = np.concatenate(sigmag_list)
         out = self.Layer_Apply(self.ebdyc.grid_source, self.ebdyc.grid_pnai, sigmag)

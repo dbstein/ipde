@@ -4,7 +4,8 @@ import fast_interp
 import finufftpy
 GSB = pybie2d.boundaries.global_smooth_boundary.global_smooth_boundary.Global_Smooth_Boundary
 PointSet = pybie2d.point_set.PointSet
-from near_finder.near_routines import gridpoints_near_points, gridpoints_near_curve, points_near_curve, gridpoints_near_curve_sparse
+from near_finder.points_near_points import gridpoints_near_points
+from near_finder.points_near_curve import gridpoints_near_curve, points_near_curve, gridpoints_near_curve_sparse
 from near_finder.phys_routines import points_inside_curve, points_inside_curve_sparse, points_inside_curve_update
 from near_finder.coordinate_routines import compute_local_coordinates
 from ipde.heavisides import SlepianMollifier

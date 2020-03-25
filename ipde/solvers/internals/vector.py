@@ -130,26 +130,30 @@ class VectorHelper(object):
         self.sigma_g = sigma_g
         # we now report back to master
         return sigma_g
-    def correct(self, ub, vb):
+    def correct(self, ub, vb, pb, single_ebdy):
         # evaluate the effect of all sigma_g except ours, as well as the effect
         # of our own sigma_r, onto the radial points
 
-        # First, we get the u on our interface associate with our sigma_g
-        w = self.Layer_Apply(self.ebdy.interface_grid_source, self.ebdy.interface, self.sigma_g)
-        # now subtract this from the given ub
-        ub = ub - w[0]
-        vb = vb - w[1]
-        Ub = np.concatenate([ub, vb])
+        if single_ebdy:
+            sigma_r_tot = self.sigma_r
+        else:  ######## THIS NEEDS TO BE FIXED TO ALLOW FOR PRESSURE CORRECTIONS=!!!!
+            # First, we get the u on our interface associate with our sigma_g
+            w = self.Layer_Apply(self.ebdy.interface_grid_source, self.ebdy.interface, self.sigma_g)
+            # now subtract this from the given ub
+            ub = ub - w[0]
+            vb = vb - w[1]
+            Ub = np.concatenate([ub, vb])
 
-        # okay, now we want a density on our interface_radial_source that gives us this
-        sigma_r_adj = v2f(self.interface_qfs_r.u2s(Ub))
+            # okay, now we want a density on our interface_radial_source that gives us this
+            sigma_r_adj = v2f(self.interface_qfs_r.u2s(Ub))
 
-        # add this to the previous sigma_r
-        sigma_r_tot = sigma_r_adj + self.sigma_r
+            # add this to the previous sigma_r
+            sigma_r_tot = sigma_r_adj + self.sigma_r
 
         # evaluate this onto radial points and add to ur
         rslp = self.Layer_Apply(self.ebdy.interface_radial_source, self.ebdy.radial_targ, sigma_r_tot)
         self.ur += rslp[0].reshape(self.ur.shape)
         self.vr += rslp[1].reshape(self.ur.shape)
+        self.pr += rslp[2].reshape(self.pr.shape)
 
-        return self.ur, self.vr
+        return self.ur, self.vr, self.pr

@@ -1,6 +1,12 @@
 import numpy as np
 from ...annular.annular import ApproximateAnnularGeometry, RealAnnularGeometry
 
+import pybie2d
+Laplace_Layer_Singular_Form = pybie2d.kernels.high_level.laplace.Laplace_Layer_Singular_Form
+Laplace_Layer_Apply = pybie2d.kernels.high_level.laplace.Laplace_Layer_Apply
+import scipy as sp
+import scipy.linalg
+
 class ScalarHelper(object):
     """
     General class for scalar solvers
@@ -75,6 +81,7 @@ class ScalarHelper(object):
         # compute the radial solution
         zer = np.zeros_like(bv)
         ur = self.annular_solver.solve(self.RAG, fr, zer, zer, **kwargs)
+        self.iterations_last_call = self.annular_solver.iterations_last_call
         # evaluate the normal derivative of the radial solution
         urn = self.get_interface_normal_derivatives(ur)
         # get the single layer to smooth the interface

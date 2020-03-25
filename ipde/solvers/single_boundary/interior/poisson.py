@@ -81,6 +81,7 @@ class PoissonSolver(object):
         uc = np.fft.ifft2(np.fft.fft2(fc)*self.ilap).real
         # evaluate this on the interface
         bv = ebdy.interpolate_grid_to_interface(uc, order=self.interpolation_order)
+        print(np.abs(bv).sum())
         # take the gradient of uc and evaluate on interface
         ucx, ucy = self.dx(uc), self.dy(uc)
         bx = ebdy.interpolate_grid_to_interface(ucx, order=self.interpolation_order)

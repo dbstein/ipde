@@ -115,4 +115,5 @@ class AnnularModifiedHelmholtzSolver(object):
         res = out[0]
         if verbose:
             print('GMRES took:', len(out[2]), 'iterations.')
+        self.iterations_last_call = len(out[2])
         return mifft(res.reshape(self.small_shape)).real

@@ -63,9 +63,8 @@ class SecondOrder_Advector(object):
             new_ebdys.append(new_ebdy)
         new_ebdyc = EmbeddedBoundaryCollection(new_ebdys)
         # get dnager zone distance
-        umax = np.sqrt((u*u + v*v).data, where=np.logical_not(u.mask)).max()
+        umax = np.sqrt(u*u + v*v).max()
         ddd = 2*umax*dt
-        print(ddd, new_ebdyc[0].radial_width)
         # raise an exception if danger zone thicker than radial width
         if ddd > new_ebdyc[0].radial_width:
             raise Exception('Velocity is so fast that one timestep oversteps safety zones; reduce timestep.')

@@ -2,6 +2,7 @@ import numpy as np
 import matplotlib as mpl
 import matplotlib.pyplot as plt
 import pybie2d
+from ipde.ebdy_collection import EmbeddedBoundaryCollection
 from ipde.embedded_boundary import EmbeddedBoundary
 from ipde.heavisides import SlepianMollifier
 from ipde.derivatives import fd_x_4, fd_y_4, fourier
@@ -11,12 +12,12 @@ star = pybie2d.misc.curve_descriptions.star
 GSB = pybie2d.boundaries.global_smooth_boundary.global_smooth_boundary.Global_Smooth_Boundary
 Grid = pybie2d.grid.Grid
 
-nb = 600
+nb = 1600
 ng = int(nb/2)
-M = 12
-pad_zone = 2
+M = 30
+pad_zone = 0
 interior = True
-slepian_r = 10
+slepian_r = 1.5*M
 
 # get heaviside function
 MOL = SlepianMollifier(slepian_r)
@@ -25,10 +26,11 @@ bdy = GSB(c=star(nb, a=0.15, f=5))
 # construct a grid
 grid = Grid([-1.5, 1.5], ng, [-1.5, 1.5], ng, x_endpoints=[True, False], y_endpoints=[True, False])
 # construct embedded boundary
-ebdy = EmbeddedBoundary(bdy, interior, M, grid.xh*0.75, pad_zone, MOL.step)
+ebdy = EmbeddedBoundary(bdy, interior, M, grid.xh*0.75, pad_zone=pad_zone, heaviside=MOL.step)
+ebdyc = EmbeddedBoundaryCollection([ebdy,])
 # register the grid
 print('\nRegistering the grid')
-ebdy.register_grid(grid)
+ebdyc.register_grid(grid)
 
 ################################################################################
 # Extract radial information from ebdy and construct annular solver
@@ -79,7 +81,7 @@ RAG = RealAnnularGeometry(sp, cur, AAG)
 fr, ft = ebdy.convert_uv_to_rt(fu_radial, fv_radial)
 lr, lt = ebdy.convert_uv_to_rt(lower_u, lower_v)
 ur, ut = ebdy.convert_uv_to_rt(upper_u, upper_v)
-re_radial, te_radial, pe_radial = solver.solve(RAG, fr, ft, lr, lt, ur, ut, verbose=True, tol=1e-12)
+re_radial, te_radial, pe_radial = solver.solve(RAG, fr, ft, lr, lt, ur, ut, verbose=True, tol=1e-14, maxiter=200, restart=50)
 ue_radial, ve_radial = ebdy.convert_rt_to_uv(re_radial, te_radial)
 # get error
 error_u = np.abs(ue_radial-ua_radial).max()

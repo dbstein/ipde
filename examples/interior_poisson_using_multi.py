@@ -18,14 +18,18 @@ Laplace_Layer_Apply = pybie2d.kernels.high_level.laplace.Laplace_Layer_Apply
 Singular_DLP = lambda src, _: Laplace_Layer_Singular_Form(src, ifdipole=True) - 0.5*np.eye(src.N)
 Naive_SLP = lambda src, trg: Laplace_Layer_Form(src, trg, ifcharge=True)
 
-nb = 1000
-M = 16
+nb = 600
+M =  20
+M = min(30, M)
 pad_zone = 0
-verbose = False
+verbose = True
 plot = True
-reparametrize = True
-slepian_r = 2*M
+reparametrize = False
+slepian_r = 1.5*M
 solver_type = 'spectral' # fourth or spectral
+coordinate_scheme = 'nufft'
+coordinate_tolerance = 1e-14
+qfs_tolerance = 1e-14
 
 # get heaviside function
 MOL = SlepianMollifier(slepian_r)
@@ -39,26 +43,28 @@ ng = 2*int(0.5*2.4//bh)
 # construct a grid
 grid = Grid([-1.2, 1.2], ng, [-1.2, 1.2], ng, x_endpoints=[True, False], y_endpoints=[True, False])
 # construct embedded boundary
-ebdy = EmbeddedBoundary(bdy, True, M, bh*1, pad_zone, MOL.step)
-ebdys = [ebdy,]
+ebdy = EmbeddedBoundary(bdy, True, M, bh*1, pad_zone=pad_zone, heaviside=MOL.step, qfs_tolerance=qfs_tolerance, coordinate_tolerance=coordinate_tolerance, coordinate_scheme=coordinate_scheme)
 ebdyc = EmbeddedBoundaryCollection([ebdy,])
 # register the grid
 print('\nRegistering the grid')
 ebdyc.register_grid(grid, verbose=verbose)
 # give ebdyc a bumpy function
-ebdyc.ready_bump(MOL.bump, (1.2-ebdy.radial_width, 1.2-ebdy.radial_width), ebdys[0].radial_width)
+ebdyc.ready_bump(MOL.bump, (1.2-ebdy.radial_width, 1.2-ebdy.radial_width), ebdyc[0].radial_width)
 
 ################################################################################
 # Get solution, forces, BCs
 
 k = 8*np.pi/3
 
-solution_func = lambda x, y: np.exp(np.sin(k*x))*np.sin(k*y)
-force_func = lambda x, y: k**2*np.exp(np.sin(k*x))*np.sin(k*y)*(np.cos(k*x)**2-np.sin(k*x)-1.0)
-f = force_func(ebdy.grid.xg, ebdy.grid.yg)*ebdy.phys
-frs = [force_func(ebdy.radial_x, ebdy.radial_y) for ebdy in ebdys]
-ua = solution_func(ebdy.grid.xg, ebdy.grid.yg)*ebdy.phys
-uars = [solution_func(ebdy.radial_x, ebdy.radial_y) for ebdy in ebdys]
+solution_func = lambda x, y: -np.cos(x)*np.exp(np.sin(x))*np.sin(y)
+force_func = lambda x, y: (2.0*np.cos(x)+3.0*np.cos(x)*np.sin(x)-np.cos(x)**3)*np.exp(np.sin(x))*np.sin(y)
+
+# solution_func = lambda x, y: np.exp(np.sin(k*x))*np.sin(k*y)
+# force_func = lambda x, y: k**2*np.exp(np.sin(k*x))*np.sin(k*y)*(np.cos(k*x)**2-np.sin(k*x)-1.0)
+f = force_func(ebdyc.grid.xg, ebdyc.grid.yg)*ebdyc.phys
+frs = [force_func(ebdy.radial_x, ebdy.radial_y) for ebdy in ebdyc]
+ua = solution_func(ebdyc.grid.xg, ebdyc.grid.yg)*ebdyc.phys
+uars = [solution_func(ebdy.radial_x, ebdy.radial_y) for ebdy in ebdyc]
 uar = uars[0]
 bcs2v = solution_func(ebdyc.all_bvx, ebdyc.all_bvy)
 bcs2l = ebdyc.v2l(bcs2v)
@@ -67,10 +73,10 @@ bcs2l = ebdyc.v2l(bcs2v)
 # Setup Poisson Solver
 
 solver = PoissonSolver(ebdyc, solver_type=solver_type)
-ue, uers = solver(f, frs, tol=1e-12, verbose=verbose)
+ue, uers = solver(f, frs, tol=1e-14, verbose=verbose)
 
 uer = uers[0]
-mue = np.ma.array(ue, mask=ebdy.ext)
+mue = np.ma.array(ue, mask=ebdyc.ext)
 
 if plot:
 	fig, ax = plt.subplots()
@@ -88,7 +94,7 @@ out = Laplace_Layer_Apply(ebdyc.bdy_inward_sources, ebdyc.grid_and_radial_pts, c
 gslp, rslpl = ebdyc.divide_grid_and_radial(out)
 rslp = rslpl[0]
 uer += rslp.reshape(uer.shape)
-ue[ebdy.phys] += gslp
+ue[ebdyc.phys] += gslp
 
 if plot:
 	fig, ax = plt.subplots()
@@ -99,8 +105,8 @@ if plot:
 # compute the error
 rerr = np.abs(uer - uar)
 gerr = np.abs(ue - ua)
-gerrp = gerr[ebdy.phys]
-mgerr = np.ma.array(gerr, mask=ebdy.ext)
+gerrp = gerr[ebdyc.phys]
+mgerr = np.ma.array(gerr, mask=ebdyc.ext)
 
 if plot:
 	fig, ax = plt.subplots()

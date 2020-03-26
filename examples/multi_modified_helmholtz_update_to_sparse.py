@@ -18,9 +18,9 @@ MH_Layer_Apply = pybie2d.kernels.high_level.modified_helmholtz.Modified_Helmholt
 
 import time
 
-nb = 1600
+nb = 600
 helmholtz_k = 5.0
-M = 32
+M = 10
 pad_zone = 0
 verbose = True
 plot = True
@@ -60,12 +60,6 @@ ebdyc = EmbeddedBoundaryCollection(ebdys)
 print('\nRegistering the grid')
 ebdyc.register_grid(grid, verbose=verbose)
 
-# timing for grid registration!
-for i in range(3):
-	st = time.time()
-	ebdys[i].register_grid(grid)
-	print('Time for grid registration: {:0.2f}'.format((time.time()-st)*1000))
-
 ################################################################################
 # Get solution, forces, BCs
 
@@ -90,7 +84,7 @@ st = time.time()
 solver = ModifiedHelmholtzSolver(ebdyc, solver_type=solver_type, k=helmholtz_k, AS_list=solver.AS_list)
 print('Time for second solver construction {:0.2f}'.format((time.time()-st)*1000))
 st = time.time()
-ue, uers = solver(f, frs, tol=1e-12, verbose=verbose)
+ue, uers = solver(f, frs, tol=1e-14, verbose=verbose, maxiter=100, restart=20)
 print('Time to solve {:0.2f}'.format((time.time()-st)*1000))
 
 # this isn't correct yet because we haven't applied boundary conditions

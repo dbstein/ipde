@@ -6,7 +6,7 @@ import scipy.linalg
 import matplotlib as mpl
 import matplotlib.pyplot as plt
 import pybie2d
-from ipde.embedded_boundary import EmbeddedBoundary
+from ipde.embedded_boundary_standalone import EmbeddedBoundary
 from ipde.heavisides import SlepianMollifier
 from ipde.derivatives import fd_x_4, fd_y_4, fourier
 from ipde.solvers.single_boundary.interior.poisson import PoissonSolver
@@ -23,8 +23,8 @@ Singular_DLP = lambda src, _: Laplace_Layer_Singular_Form(src, ifdipole=True) - 
 Naive_SLP = lambda src, trg: Laplace_Layer_Form(src, trg, ifcharge=True)
 
 nb = 200
-M = 4
-adj = 3
+M = 6
+adj = 10
 
 nb *= adj
 M *= adj
@@ -59,11 +59,8 @@ force_func = lambda x, y: (2.0*np.cos(x)+3.0*np.cos(x)*np.sin(x)-np.cos(x)**3)*n
 
 st = time.time()
 ebdy = EmbeddedBoundary(bdy, True, M, bh*1, pad_zone=0, heaviside=MOL.step)
-print(time.time()-st)
 ebdy.register_grid(grid, verbose=verbose)
-print(time.time()-st)
 solver = PoissonSolver(ebdy, MOL.bump, bump_loc=(1.2-ebdy.radial_width, 1.2-ebdy.radial_width), solver_type=solver_type)
-print(time.time()-st)
 time_setup = time.time() - st
 
 f = force_func(ebdy.grid.xg, ebdy.grid.yg)*ebdy.phys

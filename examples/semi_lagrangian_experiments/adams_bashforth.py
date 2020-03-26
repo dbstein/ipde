@@ -23,21 +23,21 @@ MH_Layer_Apply = pybie2d.kernels.high_level.modified_helmholtz.Modified_Helmholt
 Test semi-lagrangian solve...
 """
 
-max_time          = 3.0        # time to run to
+max_time          = 1.1        # time to run to
 reaction_value    = 0.5        # value for reaction term
 const_factor      = 0.5        # constant advection velocity
 diff_factor       = 0.7        # non-constant advection velocity
 nu                = 0.1        # diffusion coefficient
-nb                = 200        # number of points in boundary
+nb                = 300        # number of points in boundary
 grid_upsampling   = 2          # upsampling of grid relative to boundary
 radial_upsampling = 2          # how much to upsample cheb grid by (relative to background)
-M                 = 12         # number of chebyshev modes
+M                 = 24         # number of chebyshev modes
 pad_zone          = 0          # padding in radial grid (typically set to 0 for spectral methods)
-dt                = 0.1/2      # timestep
-solver_type       = 'fourth' # 'spectral' or 'fourth'
+dt                = 0.1/2/2/2/2/2/2     # timestep
+solver_type       = 'fourth'   # 'spectral' or 'fourth'
 qfs_fsuf          = 4          # forced upsampling for QFS
 coordinate_scheme = 'polyi'    # interpolation scheme for coordinate finding ('polyi' or 'nufft')
-coordinate_tol    = 1e-8      # probablys should be set to be compatible with 
+coordinate_tol    = 1e-8       # probablys should be set to be compatible with 
 xmin              = -1.5       # domain definition
 xmax              =  4.5       # domain definition
 ymin              = -1.5       # domain definition
@@ -183,8 +183,8 @@ while t < max_time-1e-10:
         y_tracers.append(by)
 
         # take gradients of the velocity fields
-        ux, uy = ebdyc.gradient2(u)
-        vx, vy = ebdyc.gradient2(v)
+        ux, uy = ebdyc.gradient(u)
+        vx, vy = ebdyc.gradient(v)
 
         # now generate a new ebdy based on the moved boundary
         new_bdy = GSB(x=bx, y=by)
@@ -200,19 +200,14 @@ while t < max_time-1e-10:
             new_ebdyc.register_grid(grid)
 
         # let's get the points that need to be interpolated to
-        gp = new_ebdyc.grid_pna
-        ap = new_ebdyc.radial_pts
-
-        aax = np.concatenate([gp.x, ap.x])
-        aay = np.concatenate([gp.y, ap.y])
-        aap = PointSet(x=aax, y=aay)
+        aap = new_ebdyc.pnar
         if use_danger_zone:
-            AP_key  = ebdy.register_points(aap.x, aap.y, danger_zone=new_ebdy.in_danger_zone, gi=new_ebdy.guess_inds)
+            AP_key  = ebdyc.register_points(aap.x, aap.y, dzl=new_ebdyc.danger_zone_list, gil=new_ebdyc.guess_ind_list)
         else:
-            AP_key  = ebdy.register_points(aap.x, aap.y)
+            AP_key  = ebdyc.register_points(aap.x, aap.y)
 
         # now we need to interpolate onto things
-        AEP = ebdy.registered_partitions[AP_key]
+        AEP = ebdyc.registered_partitions[AP_key]
 
         # generate a holding ground for the new c
         c_new = EmbeddedFunction(new_ebdyc)
@@ -223,17 +218,16 @@ while t < max_time-1e-10:
         yd_all = np.zeros(aap.N)
 
         # advect those in the annulus
-        c1,  c2,  c3  = AEP.get_categories()
-        c1n, c2n, c3n = AEP.get_category_Ns()
+        c1n, c2n, c3n = AEP.get_Ns()
         # category 1 and 2
-        c1_2 = np.logical_or(c1, c2)
         c1_2n = c1n + c2n
-        uxh = ebdy.interpolate_to_points(ux, aap.x, aap.y)
-        uyh = ebdy.interpolate_to_points(uy, aap.x, aap.y)
-        vxh = ebdy.interpolate_to_points(vx, aap.x, aap.y)
-        vyh = ebdy.interpolate_to_points(vy, aap.x, aap.y)
-        uh = ebdy.interpolate_to_points(u, aap.x, aap.y)
-        vh = ebdy.interpolate_to_points(v, aap.x, aap.y)
+        c1_2 = AEP.zone1_or_2
+        uxh = ebdyc.interpolate_to_points(ux, aap.x, aap.y)
+        uyh = ebdyc.interpolate_to_points(uy, aap.x, aap.y)
+        vxh = ebdyc.interpolate_to_points(vx, aap.x, aap.y)
+        vyh = ebdyc.interpolate_to_points(vy, aap.x, aap.y)
+        uh = ebdyc.interpolate_to_points(u, aap.x, aap.y)
+        vh = ebdyc.interpolate_to_points(v, aap.x, aap.y)
         SLM = np.zeros([c1_2n,] + [2,2], dtype=float)
         SLR = np.zeros([c1_2n,] + [2,], dtype=float)
         SLM[:,0,0] = 1 + dt*uxh[c1_2]
@@ -245,90 +239,77 @@ while t < max_time-1e-10:
         OUT = np.linalg.solve(SLM, SLR)
         xdt, ydt = OUT[:,0], OUT[:,1]
         xd, yd = aap.x[c1_2] - xdt, aap.y[c1_2] - ydt
-        # seems we should now back check xd, yd to make sure they're actually in ebdy!
-        if use_danger_zone:
-            test_key = ebdy.register_points(xd, yd, danger_zone=new_ebdy.in_danger_zone[c1_2], gi=new_ebdy.guess_inds[c1_2])
-        else:
-            test_key = ebdy.register_points(xd, yd)
-        test_part = ebdy.registered_partitions[test_key]
-        test1, test2, test3 = test_part.get_categories()
-        # reclassify things that are in test3 as being in c3
-        c3[c1_2] = test3
-        # recount c3
-        c3n = c3.sum()
         xd_all[c1_2] = xd
         yd_all[c1_2] = yd
         # categroy 3... this is the tricky one
         if c3n > 0:
-            th = 2*np.pi/nb
-            tk = np.fft.fftfreq(nb, th/(2*np.pi))
-            def d1_der(f):
-                return np.fft.ifft(np.fft.fft(f)*tk*1j).real
-            interp = lambda f: interp1d(0, 2*np.pi, th, f, k=3, p=True)
-            bx_interp  = interp(ebdy.bdy.x)
-            by_interp  = interp(ebdy.bdy.y)
-            bxs_interp = interp(d1_der(ebdy.bdy.x))
-            bys_interp = interp(d1_der(ebdy.bdy.y))
-            nx_interp  = interp(ebdy.bdy.normal_x)
-            ny_interp  = interp(ebdy.bdy.normal_y)
-            nxs_interp = interp(d1_der(ebdy.bdy.normal_x))
-            nys_interp = interp(d1_der(ebdy.bdy.normal_y))
-            urb = ebdy.interpolate_radial_to_boundary_normal_derivative(u.radial_value_list[0])
-            vrb = ebdy.interpolate_radial_to_boundary_normal_derivative(v.radial_value_list[0])
-            ub_interp   = interp(ub)
-            vb_interp   = interp(vb)
-            urb_interp  = interp(urb)
-            vrb_interp  = interp(vrb)
-            ubs_interp  = interp(d1_der(ub))
-            vbs_interp  = interp(d1_der(vb))
-            urbs_interp = interp(d1_der(urb))
-            vrbs_interp = interp(d1_der(vrb))
-            xo = aap.x[c3]
-            yo = aap.y[c3]
-            def objective(s, r):
-                f = np.empty([s.size, 2])
-                f[:,0] = bx_interp(s) + r*nx_interp(s) + dt*ub_interp(s) + dt*r*urb_interp(s) - xo
-                f[:,1] = by_interp(s) + r*ny_interp(s) + dt*vb_interp(s) + dt*r*vrb_interp(s) - yo
-                return f
-            def Jac(s, r):
-                J = np.empty([s.size, 2, 2])
-                J[:,0,0] = bxs_interp(s) + r*nxs_interp(s) + dt*ubs_interp(s) + dt*r*urbs_interp(s)
-                J[:,1,0] = bys_interp(s) + r*nys_interp(s) + dt*vbs_interp(s) + dt*r*vrbs_interp(s)
-                J[:,0,1] = nx_interp(s) + dt*urb_interp(s)
-                J[:,1,1] = ny_interp(s) + dt*vrb_interp(s)
-                return J
-            # take as guess inds our s, r
-            # s = new_ebdy.radial_t.ravel()[c3[gp.N:]]
-            # r = new_ebdy.radial_r.ravel()[c3[gp.N:]]
-            # s = AEP.test_t
-            # r = AEP.test_r
-            s =   AEP.full_t[c3]
-            r =   AEP.full_r[c3]
-            # now solve for sd, rd
-            res = objective(s, r)
-            mres = np.hypot(res[:,0], res[:,1]).max()
-            tol = 1e-12
-            while mres > tol:
-                J = Jac(s, r)
-                d = np.linalg.solve(J, res)
-                s -= d[:,0]
-                r -= d[:,1]
+            for ind, ebdy in enumerate(ebdyc):
+                c3l = AEP.zone3l[ind]
+                th = 2*np.pi/nb
+                tk = np.fft.fftfreq(nb, th/(2*np.pi))
+                def d1_der(f):
+                    return np.fft.ifft(np.fft.fft(f)*tk*1j).real
+                interp = lambda f: interp1d(0, 2*np.pi, th, f, k=3, p=True)
+                bx_interp  = interp(ebdy.bdy.x)
+                by_interp  = interp(ebdy.bdy.y)
+                bxs_interp = interp(d1_der(ebdy.bdy.x))
+                bys_interp = interp(d1_der(ebdy.bdy.y))
+                nx_interp  = interp(ebdy.bdy.normal_x)
+                ny_interp  = interp(ebdy.bdy.normal_y)
+                nxs_interp = interp(d1_der(ebdy.bdy.normal_x))
+                nys_interp = interp(d1_der(ebdy.bdy.normal_y))
+                urb = ebdy.interpolate_radial_to_boundary_normal_derivative(u[ind])
+                vrb = ebdy.interpolate_radial_to_boundary_normal_derivative(v[ind])
+                ub_interp   = interp(ub)
+                vb_interp   = interp(vb)
+                urb_interp  = interp(urb)
+                vrb_interp  = interp(vrb)
+                ubs_interp  = interp(d1_der(ub))
+                vbs_interp  = interp(d1_der(vb))
+                urbs_interp = interp(d1_der(urb))
+                vrbs_interp = interp(d1_der(vrb))
+                xo = aap.x[c3l]
+                yo = aap.y[c3l]
+                def objective(s, r):
+                    f = np.empty([s.size, 2])
+                    f[:,0] = bx_interp(s) + r*nx_interp(s) + dt*ub_interp(s) + dt*r*urb_interp(s) - xo
+                    f[:,1] = by_interp(s) + r*ny_interp(s) + dt*vb_interp(s) + dt*r*vrb_interp(s) - yo
+                    return f
+                def Jac(s, r):
+                    J = np.empty([s.size, 2, 2])
+                    J[:,0,0] = bxs_interp(s) + r*nxs_interp(s) + dt*ubs_interp(s) + dt*r*urbs_interp(s)
+                    J[:,1,0] = bys_interp(s) + r*nys_interp(s) + dt*vbs_interp(s) + dt*r*vrbs_interp(s)
+                    J[:,0,1] = nx_interp(s) + dt*urb_interp(s)
+                    J[:,1,1] = ny_interp(s) + dt*vrb_interp(s)
+                    return J
+                # take as guess inds our s, r
+                s = AEP.zone3t[ind]
+                r = AEP.zone3r[ind]
+                # now solve for sd, rd
                 res = objective(s, r)
                 mres = np.hypot(res[:,0], res[:,1]).max()
-            # get the departure points
-            xd = bx_interp(s) + nx_interp(s)*r
-            yd = by_interp(s) + ny_interp(s)*r
-            xd_all[c3] = xd
-            yd_all[c3] = yd
+                tol = 1e-12
+                while mres > tol:
+                    J = Jac(s, r)
+                    d = np.linalg.solve(J, res)
+                    s -= d[:,0]
+                    r -= d[:,1]
+                    res = objective(s, r)
+                    mres = np.hypot(res[:,0], res[:,1]).max()
+                # get the departure points
+                xd = bx_interp(s) + nx_interp(s)*r
+                yd = by_interp(s) + ny_interp(s)*r
+                xd_all[c3l] = xd
+                yd_all[c3l] = yd
         # now interpolate to c
         if use_danger_zone:
-            ch = ebdy.interpolate_to_points(c - dt*scaled_nonlinearity(c), xd_all, yd_all, danger_zone=new_ebdy.in_danger_zone, gi=new_ebdy.guess_inds)
+            ch = ebdyc.interpolate_to_points(c - dt*scaled_nonlinearity(c), xd_all, yd_all, fix_r=True, dzl=new_ebdyc.danger_zone_list, gil=new_ebdyc.guess_ind_list)
         else:
-            ch = ebdy.interpolate_to_points(c - dt*scaled_nonlinearity(c), xd_all, yd_all)
+            ch = ebdyc.interpolate_to_points(c - dt*scaled_nonlinearity(c), xd_all, yd_all, fix_r=True)
         # set the grid values
-        c_new.grid_value[new_ebdyc.phys_not_in_annulus] = ch[:gp.N]
+        c_new.grid_value[new_ebdyc.phys_not_in_annulus] = ch[:new_ebdyc.grid_pna_num]
         # set the radial values
-        c_new.radial_value_list[0][:] = ch[gp.N:].reshape(ebdy.radial_shape)
+        c_new.radial_value_list[0][:] = ch[new_ebdyc.grid_pna_num:].reshape(new_ebdyc[0].radial_shape)
         # overwrite under grid under annulus by radial grid
         _ = new_ebdyc.interpolate_radial_to_grid(c_new.radial_value_list, c_new.grid_value)
         # save this for a moment
@@ -376,8 +357,8 @@ while t < max_time-1e-10:
         y_tracers.append(by)
 
         # take gradients of the velocity fields
-        ux, uy = ebdyc.gradient2(u)
-        vx, vy = ebdyc.gradient2(v)
+        ux, uy = ebdyc.gradient(u)
+        vx, vy = ebdyc.gradient(v)
 
         myprint('          Velocity gradient: '.ljust(printjustment), '{:0.1f}'.format((time.time()-st)*100)); st=time.time()
 
@@ -397,26 +378,20 @@ while t < max_time-1e-10:
         myprint('          Update ebdy: '.ljust(printjustment), '{:0.1f}'.format((time.time()-st)*100)); st=time.time()
 
         # let's get the points that need to be interpolated to
-        gp = new_ebdyc.grid_pna
-        ap = new_ebdyc.radial_pts
-
-        aax = np.concatenate([gp.x, ap.x])
-        aay = np.concatenate([gp.y, ap.y])
-        aap = PointSet(x=aax, y=aay)
+        aap = new_ebdyc.pnar
 
         if use_danger_zone:
-            AP_key  = ebdy.register_points(aap.x, aap.y, danger_zone=new_ebdy.in_danger_zone, gi=new_ebdy.guess_inds)
-            OAP_key = ebdy_old.register_points(aap.x, aap.y, danger_zone=new_ebdy.in_danger_zone, gi=new_ebdy.guess_inds)
+            AP_key  = ebdyc.register_points(aap.x, aap.y, dzl=new_ebdyc.danger_zone_list, gil=new_ebdyc.guess_ind_list)
+            OAP_key = ebdyc_old.register_points(aap.x, aap.y, dzl=new_ebdyc.danger_zone_list, gil=new_ebdyc.guess_ind_list)
         else:
-            AP_key  = ebdy.register_points(aap.x, aap.y)
-            OAP_key = ebdy_old.register_points(aap.x, aap.y)
-
+            AP_key  = ebdyc.register_points(aap.x, aap.y)
+            OAP_key = ebdyc_old.register_points(aap.x, aap.y)
 
         myprint('          Register points to old ebdys: '.ljust(printjustment), '{:0.1f}'.format((time.time()-st)*100)); st=time.time()
 
         # now we need to interpolate onto things
-        AEP = ebdy.registered_partitions[AP_key]
-        OAEP = ebdy_old.registered_partitions[OAP_key]
+        AEP = ebdyc.registered_partitions[AP_key]
+        OAEP = ebdyc_old.registered_partitions[OAP_key]
 
         # generate a holding ground for the new c
         c_new = EmbeddedFunction(new_ebdyc)
@@ -429,29 +404,30 @@ while t < max_time-1e-10:
         yD_all = np.zeros(aap.N)
 
         # advect those in the annulus
-        c1,  c2,  c3  = AEP.get_categories()
-        oc1, oc2, oc3 = OAEP.get_categories()
-        fc3 = np.logical_or(c3, oc3)
-        fc12 = np.logical_not(fc3)
-        fc3n = np.sum(fc3)
+        c1n, c2n, c3n = AEP.get_Ns()
+        oc1n, oc2n, oc3n = OAEP.get_Ns()
+        # category 1 and 2
+        c1_2 = AEP.zone1_or_2
+        oc1_2 = OAEP.zone1_or_2
+        fc12 = np.logical_and(c1_2, oc1_2)
         fc12n = np.sum(fc12)
 
         myprint('          Separate categories: '.ljust(printjustment), '{:0.1f}'.format((time.time()-st)*100)); st=time.time()
 
         # category 1 and 2
-        uxh = ebdy.interpolate_to_points(ux, aap.x, aap.y)
-        uyh = ebdy.interpolate_to_points(uy, aap.x, aap.y)
-        vxh = ebdy.interpolate_to_points(vx, aap.x, aap.y)
-        vyh = ebdy.interpolate_to_points(vy, aap.x, aap.y)
-        uh =  ebdy.interpolate_to_points(u, aap.x, aap.y)
-        vh =  ebdy.interpolate_to_points(v, aap.x, aap.y)
+        uxh = ebdyc.interpolate_to_points(ux, aap.x, aap.y)
+        uyh = ebdyc.interpolate_to_points(uy, aap.x, aap.y)
+        vxh = ebdyc.interpolate_to_points(vx, aap.x, aap.y)
+        vyh = ebdyc.interpolate_to_points(vy, aap.x, aap.y)
+        uh =  ebdyc.interpolate_to_points(u, aap.x, aap.y)
+        vh =  ebdyc.interpolate_to_points(v, aap.x, aap.y)
 
-        uxoh = ebdy_old.interpolate_to_points(uxo, aap.x, aap.y)
-        uyoh = ebdy_old.interpolate_to_points(uyo, aap.x, aap.y)
-        vxoh = ebdy_old.interpolate_to_points(vxo, aap.x, aap.y)
-        vyoh = ebdy_old.interpolate_to_points(vyo, aap.x, aap.y)
-        uoh =  ebdy_old.interpolate_to_points(uo,  aap.x, aap.y)
-        voh =  ebdy_old.interpolate_to_points(vo,  aap.x, aap.y)
+        uxoh = ebdyc_old.interpolate_to_points(uxo, aap.x, aap.y)
+        uyoh = ebdyc_old.interpolate_to_points(uyo, aap.x, aap.y)
+        vxoh = ebdyc_old.interpolate_to_points(vxo, aap.x, aap.y)
+        vyoh = ebdyc_old.interpolate_to_points(vyo, aap.x, aap.y)
+        uoh =  ebdyc_old.interpolate_to_points(uo,  aap.x, aap.y)
+        voh =  ebdyc_old.interpolate_to_points(vo,  aap.x, aap.y)
 
         myprint('          Interpolate velocities: '.ljust(printjustment), '{:0.1f}'.format((time.time()-st)*100)); st=time.time()
 
@@ -483,23 +459,6 @@ while t < max_time-1e-10:
         dx, dy, Dx, Dy = OUT[:,0], OUT[:,1], OUT[:,2], OUT[:,3]
         xd, yd = aap.x[fc12] - dx, aap.y[fc12] - dy
         xD, yD = aap.x[fc12] - Dx, aap.y[fc12] - Dy
-        # seems we should now back check xd, yd to make sure they're actually in ebdy!
-        if use_danger_zone:
-            test_key = ebdy.register_points(xd, yd, danger_zone=new_ebdy.in_danger_zone[fc12], gi=new_ebdy.guess_inds[fc12])
-            old_test_key = ebdy_old.register_points(xD, yD, danger_zone=new_ebdy.in_danger_zone[fc12], gi=new_ebdy.guess_inds[fc12])
-        else:
-            test_key = ebdy.register_points(xd, yd)
-            old_test_key = ebdy_old.register_points(xD, yD)
-        test_part = ebdy.registered_partitions[test_key]
-        test1, test2, test3 = test_part.get_categories()
-        ### TEST KEYS FOR EBDY_OLD
-        old_test_part = ebdy_old.registered_partitions[old_test_key]
-        old_test1, old_test2, old_test3 = old_test_part.get_categories()
-        total_test3 = np.logical_or(test3, old_test3)
-        # reclassify things that are in test3 as being in c3
-        fc3[fc12] = total_test3
-        # recount c3
-        fc3n = fc3.sum()
         xd_all[fc12] = xd
         yd_all[fc12] = yd
         xD_all[fc12] = xD
@@ -508,151 +467,157 @@ while t < max_time-1e-10:
         myprint('          Category 2 work: '.ljust(printjustment), '{:0.1f}'.format((time.time()-st)*100)); st=time.time()
 
         # categroy 3... this is the tricky one
+        fc3n = aap.N - fc12n
         if fc3n > 0:
-            th = 2*np.pi/nb
-            tk = np.fft.fftfreq(nb, th/(2*np.pi))
-            def d1_der(f):
-                return np.fft.ifft(np.fft.fft(f)*tk*1j).real
-            interp = lambda f: interp1d(0, 2*np.pi, th, f, k=3, p=True)
-            bx_interp  = interp(ebdy.bdy.x)
-            by_interp  = interp(ebdy.bdy.y)
-            bxs_interp = interp(d1_der(ebdy.bdy.x))
-            bys_interp = interp(d1_der(ebdy.bdy.y))
-            nx_interp  = interp(ebdy.bdy.normal_x)
-            ny_interp  = interp(ebdy.bdy.normal_y)
-            nxs_interp = interp(d1_der(ebdy.bdy.normal_x))
-            nys_interp = interp(d1_der(ebdy.bdy.normal_y))
-            urb = ebdy.interpolate_radial_to_boundary_normal_derivative(u.radial_value_list[0])
-            vrb = ebdy.interpolate_radial_to_boundary_normal_derivative(v.radial_value_list[0])
-            urrb = ebdy.interpolate_radial_to_boundary_normal_derivative2(u.radial_value_list[0])
-            vrrb = ebdy.interpolate_radial_to_boundary_normal_derivative2(v.radial_value_list[0])
-            ub_interp   = interp(ub)
-            vb_interp   = interp(vb)
-            urb_interp  = interp(urb)
-            vrb_interp  = interp(vrb)
-            urrb_interp  = interp(urrb)
-            vrrb_interp  = interp(vrrb)
-            ubs_interp  = interp(d1_der(ub))
-            vbs_interp  = interp(d1_der(vb))
-            urbs_interp = interp(d1_der(urb))
-            vrbs_interp = interp(d1_der(vrb))
-            urrbs_interp = interp(d1_der(urrb))
-            vrrbs_interp = interp(d1_der(vrrb))
+            for ind, (ebdy, ebdy_old) in enumerate(zip(ebdyc, ebdyc_old)):
+                c3l = AEP.zone3l[ind]
+                oc3l = OAEP.zone3l[ind]
+                fc3l = np.unique(np.concatenate([c3l, oc3l]))
 
-            old_bx_interp  = interp(ebdy_old.bdy.x)
-            old_by_interp  = interp(ebdy_old.bdy.y)
-            old_bxs_interp = interp(d1_der(ebdy_old.bdy.x))
-            old_bys_interp = interp(d1_der(ebdy_old.bdy.y))
-            old_nx_interp  = interp(ebdy_old.bdy.normal_x)
-            old_ny_interp  = interp(ebdy_old.bdy.normal_y)
-            old_nxs_interp = interp(d1_der(ebdy_old.bdy.normal_x))
-            old_nys_interp = interp(d1_der(ebdy_old.bdy.normal_y))
-            old_ub = ebdy_old.interpolate_radial_to_boundary(uo.radial_value_list[0])
-            old_vb = ebdy_old.interpolate_radial_to_boundary(vo.radial_value_list[0])
-            old_urb = ebdy_old.interpolate_radial_to_boundary_normal_derivative(uo.radial_value_list[0])
-            old_vrb = ebdy_old.interpolate_radial_to_boundary_normal_derivative(vo.radial_value_list[0])
-            old_urrb = ebdy_old.interpolate_radial_to_boundary_normal_derivative2(uo.radial_value_list[0])
-            old_vrrb = ebdy_old.interpolate_radial_to_boundary_normal_derivative2(vo.radial_value_list[0])
-            # i think the old parm is right, but should think about
-            old_ub_interp   = interp(old_ub)
-            old_vb_interp   = interp(old_vb)
-            old_urb_interp  = interp(old_urb)
-            old_vrb_interp  = interp(old_vrb)
-            old_urrb_interp  = interp(old_urrb)
-            old_vrrb_interp  = interp(old_vrrb)
-            old_ubs_interp  = interp(d1_der(old_ub))
-            old_vbs_interp  = interp(d1_der(old_vb))
-            old_urbs_interp = interp(d1_der(old_urb))
-            old_vrbs_interp = interp(d1_der(old_vrb))
-            old_urrbs_interp = interp(d1_der(old_urrb))
-            old_vrrbs_interp = interp(d1_der(old_vrrb))
+                th = 2*np.pi/nb
+                tk = np.fft.fftfreq(nb, th/(2*np.pi))
+                def d1_der(f):
+                    return np.fft.ifft(np.fft.fft(f)*tk*1j).real
+                interp = lambda f: interp1d(0, 2*np.pi, th, f, k=3, p=True)
+                bx_interp  = interp(ebdy.bdy.x)
+                by_interp  = interp(ebdy.bdy.y)
+                bxs_interp = interp(d1_der(ebdy.bdy.x))
+                bys_interp = interp(d1_der(ebdy.bdy.y))
+                nx_interp  = interp(ebdy.bdy.normal_x)
+                ny_interp  = interp(ebdy.bdy.normal_y)
+                nxs_interp = interp(d1_der(ebdy.bdy.normal_x))
+                nys_interp = interp(d1_der(ebdy.bdy.normal_y))
+                urb = ebdy.interpolate_radial_to_boundary_normal_derivative(u.radial_value_list[0])
+                vrb = ebdy.interpolate_radial_to_boundary_normal_derivative(v.radial_value_list[0])
+                urrb = ebdy.interpolate_radial_to_boundary_normal_derivative2(u.radial_value_list[0])
+                vrrb = ebdy.interpolate_radial_to_boundary_normal_derivative2(v.radial_value_list[0])
+                ub_interp   = interp(ub)
+                vb_interp   = interp(vb)
+                urb_interp  = interp(urb)
+                vrb_interp  = interp(vrb)
+                urrb_interp  = interp(urrb)
+                vrrb_interp  = interp(vrrb)
+                ubs_interp  = interp(d1_der(ub))
+                vbs_interp  = interp(d1_der(vb))
+                urbs_interp = interp(d1_der(urb))
+                vrbs_interp = interp(d1_der(vrb))
+                urrbs_interp = interp(d1_der(urrb))
+                vrrbs_interp = interp(d1_der(vrrb))
 
-            xx = aap.x[fc3]
-            yy = aap.y[fc3]
-            def objective(s, r, so, ro):
-                f = np.empty([s.size, 4])
-                f[:,0] = old_bx_interp(so) + ro*old_nx_interp(so) + 2*dt*ub_interp(s) + 2*dt*r*urb_interp(s) + dt*r**2*urrb_interp(s) - xx
-                f[:,1] = old_by_interp(so) + ro*old_ny_interp(so) + 2*dt*vb_interp(s) + 2*dt*r*vrb_interp(s) + dt*r**2*vrrb_interp(s) - yy
-                f[:,2] = bx_interp(s) + r*nx_interp(s) + 1.5*dt*ub_interp(s) + 1.5*dt*r*urb_interp(s) + 0.75*dt*r**2*urrb_interp(s) - 0.5*dt*old_ub_interp(so) - 0.5*dt*ro*old_urb_interp(so) - 0.25*dt*ro**2*old_urrb_interp(so) - xx
-                f[:,3] = by_interp(s) + r*ny_interp(s) + 1.5*dt*vb_interp(s) + 1.5*dt*r*vrb_interp(s) + 0.75*dt*r**2*vrrb_interp(s) - 0.5*dt*old_vb_interp(so) - 0.5*dt*ro*old_vrb_interp(so) - 0.25*dt*ro**2*old_vrrb_interp(so) - yy
-                return f
-            def Jac(s, r, so, ro):
-                J = np.empty([s.size, 4, 4])
-                # derivative with respect to s
-                J[:,0,0] = 2*dt*ubs_interp(s) + 2*dt*r*urbs_interp(s) + dt*r**2*urrbs_interp(s)
-                J[:,1,0] = 2*dt*vbs_interp(s) + 2*dt*r*vrbs_interp(s) + dt*r**2*vrrbs_interp(s)
-                J[:,2,0] = bxs_interp(s) + r*nxs_interp(s) + 1.5*dt*ubs_interp(s) + 1.5*dt*r*urbs_interp(s) + 0.75*dt*r**2*urrbs_interp(s)
-                J[:,3,0] = bys_interp(s) + r*nys_interp(s) + 1.5*dt*vbs_interp(s) + 1.5*dt*r*vrbs_interp(s) + 0.75*dt*r**2*vrrbs_interp(s)
-                # derivative with respect to r
-                J[:,0,1] = 2*dt*urb_interp(s) + 2*dt*r*urrb_interp(s)
-                J[:,1,1] = 2*dt*vrb_interp(s) + 2*dt*r*vrrb_interp(s)
-                J[:,2,1] = nx_interp(s) + 1.5*dt*urb_interp(s) + 1.5*dt*r*urrb_interp(s)
-                J[:,3,1] = ny_interp(s) + 1.5*dt*vrb_interp(s) + 1.5*dt*r*vrrb_interp(s)
-                # derivative with respect to so
-                J[:,0,2] = old_bxs_interp(so) + ro*old_nxs_interp(so)
-                J[:,1,2] = old_bys_interp(so) + ro*old_nys_interp(so)
-                J[:,2,2] = -0.5*dt*old_ubs_interp(so) - 0.5*dt*ro*old_urbs_interp(so) - 0.25*dt*ro**2*old_urrbs_interp(so)
-                J[:,3,2] = -0.5*dt*old_vbs_interp(so) - 0.5*dt*ro*old_vrbs_interp(so) - 0.25*dt*ro**2*old_vrrbs_interp(so)
-                # derivative with respect to ro
-                J[:,0,3] = old_nx_interp(so)
-                J[:,1,3] = old_ny_interp(so)
-                J[:,2,3] = -0.5*dt*old_urb_interp(so) - 0.5*dt*ro*old_urrb_interp(so)
-                J[:,3,3] = -0.5*dt*old_vrb_interp(so) - 0.5*dt*ro*old_vrrb_interp(so)
-                return J
-            # take as guess inds our s, r
-            s =   AEP.full_t[fc3]
-            r =   AEP.full_r[fc3]
-            so = OAEP.full_t[fc3]
-            ro = OAEP.full_r[fc3]
-            # now solve for sd, rd
-            res = objective(s, r, so, ro)
-            mres1 = np.hypot(res[:,0], res[:,1]).max()
-            mres2 = np.hypot(res[:,2], res[:,3]).max()
-            mres = max(mres1, mres2)
-            tol = 1e-12
-            while mres > tol:
-                J = Jac(s, r, so, ro)
-                d = np.linalg.solve(J, res)
-                s  -= d[:,0]
-                r  -= d[:,1]
-                so -= d[:,2]
-                ro -= d[:,3]
+                old_bx_interp  = interp(ebdy_old.bdy.x)
+                old_by_interp  = interp(ebdy_old.bdy.y)
+                old_bxs_interp = interp(d1_der(ebdy_old.bdy.x))
+                old_bys_interp = interp(d1_der(ebdy_old.bdy.y))
+                old_nx_interp  = interp(ebdy_old.bdy.normal_x)
+                old_ny_interp  = interp(ebdy_old.bdy.normal_y)
+                old_nxs_interp = interp(d1_der(ebdy_old.bdy.normal_x))
+                old_nys_interp = interp(d1_der(ebdy_old.bdy.normal_y))
+                old_ub = ebdy_old.interpolate_radial_to_boundary(uo.radial_value_list[0])
+                old_vb = ebdy_old.interpolate_radial_to_boundary(vo.radial_value_list[0])
+                old_urb = ebdy_old.interpolate_radial_to_boundary_normal_derivative(uo.radial_value_list[0])
+                old_vrb = ebdy_old.interpolate_radial_to_boundary_normal_derivative(vo.radial_value_list[0])
+                old_urrb = ebdy_old.interpolate_radial_to_boundary_normal_derivative2(uo.radial_value_list[0])
+                old_vrrb = ebdy_old.interpolate_radial_to_boundary_normal_derivative2(vo.radial_value_list[0])
+                # i think the old parm is right, but should think about
+                old_ub_interp   = interp(old_ub)
+                old_vb_interp   = interp(old_vb)
+                old_urb_interp  = interp(old_urb)
+                old_vrb_interp  = interp(old_vrb)
+                old_urrb_interp  = interp(old_urrb)
+                old_vrrb_interp  = interp(old_vrrb)
+                old_ubs_interp  = interp(d1_der(old_ub))
+                old_vbs_interp  = interp(d1_der(old_vb))
+                old_urbs_interp = interp(d1_der(old_urb))
+                old_vrbs_interp = interp(d1_der(old_vrb))
+                old_urrbs_interp = interp(d1_der(old_urrb))
+                old_vrrbs_interp = interp(d1_der(old_vrrb))
+
+                xx = aap.x[fc3l]
+                yy = aap.y[fc3l]
+                def objective(s, r, so, ro):
+                    f = np.empty([s.size, 4])
+                    f[:,0] = old_bx_interp(so) + ro*old_nx_interp(so) + 2*dt*ub_interp(s) + 2*dt*r*urb_interp(s) + dt*r**2*urrb_interp(s) - xx
+                    f[:,1] = old_by_interp(so) + ro*old_ny_interp(so) + 2*dt*vb_interp(s) + 2*dt*r*vrb_interp(s) + dt*r**2*vrrb_interp(s) - yy
+                    f[:,2] = bx_interp(s) + r*nx_interp(s) + 1.5*dt*ub_interp(s) + 1.5*dt*r*urb_interp(s) + 0.75*dt*r**2*urrb_interp(s) - 0.5*dt*old_ub_interp(so) - 0.5*dt*ro*old_urb_interp(so) - 0.25*dt*ro**2*old_urrb_interp(so) - xx
+                    f[:,3] = by_interp(s) + r*ny_interp(s) + 1.5*dt*vb_interp(s) + 1.5*dt*r*vrb_interp(s) + 0.75*dt*r**2*vrrb_interp(s) - 0.5*dt*old_vb_interp(so) - 0.5*dt*ro*old_vrb_interp(so) - 0.25*dt*ro**2*old_vrrb_interp(so) - yy
+                    return f
+                def Jac(s, r, so, ro):
+                    J = np.empty([s.size, 4, 4])
+                    # derivative with respect to s
+                    J[:,0,0] = 2*dt*ubs_interp(s) + 2*dt*r*urbs_interp(s) + dt*r**2*urrbs_interp(s)
+                    J[:,1,0] = 2*dt*vbs_interp(s) + 2*dt*r*vrbs_interp(s) + dt*r**2*vrrbs_interp(s)
+                    J[:,2,0] = bxs_interp(s) + r*nxs_interp(s) + 1.5*dt*ubs_interp(s) + 1.5*dt*r*urbs_interp(s) + 0.75*dt*r**2*urrbs_interp(s)
+                    J[:,3,0] = bys_interp(s) + r*nys_interp(s) + 1.5*dt*vbs_interp(s) + 1.5*dt*r*vrbs_interp(s) + 0.75*dt*r**2*vrrbs_interp(s)
+                    # derivative with respect to r
+                    J[:,0,1] = 2*dt*urb_interp(s) + 2*dt*r*urrb_interp(s)
+                    J[:,1,1] = 2*dt*vrb_interp(s) + 2*dt*r*vrrb_interp(s)
+                    J[:,2,1] = nx_interp(s) + 1.5*dt*urb_interp(s) + 1.5*dt*r*urrb_interp(s)
+                    J[:,3,1] = ny_interp(s) + 1.5*dt*vrb_interp(s) + 1.5*dt*r*vrrb_interp(s)
+                    # derivative with respect to so
+                    J[:,0,2] = old_bxs_interp(so) + ro*old_nxs_interp(so)
+                    J[:,1,2] = old_bys_interp(so) + ro*old_nys_interp(so)
+                    J[:,2,2] = -0.5*dt*old_ubs_interp(so) - 0.5*dt*ro*old_urbs_interp(so) - 0.25*dt*ro**2*old_urrbs_interp(so)
+                    J[:,3,2] = -0.5*dt*old_vbs_interp(so) - 0.5*dt*ro*old_vrbs_interp(so) - 0.25*dt*ro**2*old_vrrbs_interp(so)
+                    # derivative with respect to ro
+                    J[:,0,3] = old_nx_interp(so)
+                    J[:,1,3] = old_ny_interp(so)
+                    J[:,2,3] = -0.5*dt*old_urb_interp(so) - 0.5*dt*ro*old_urrb_interp(so)
+                    J[:,3,3] = -0.5*dt*old_vrb_interp(so) - 0.5*dt*ro*old_vrrb_interp(so)
+                    return J
+                # take as guess inds our s, r
+                s =   AEP.full_t[fc3l]
+                r =   AEP.full_r[fc3l]
+                so = OAEP.full_t[fc3l]
+                ro = OAEP.full_r[fc3l]
+                # now solve for sd, rd
                 res = objective(s, r, so, ro)
                 mres1 = np.hypot(res[:,0], res[:,1]).max()
                 mres2 = np.hypot(res[:,2], res[:,3]).max()
                 mres = max(mres1, mres2)
-            r_fail_1 = r.max() > 0.0
-            r_fail_2 = r.min() < -ebdy.radial_width
-            ro_fail_1 = ro.max() > 0.0
-            ro_fail_2 = ro.min() < -ebdy_old.radial_width
-            r_fail = r_fail_1 or r_fail_2
-            ro_fail = ro_fail_1 or ro_fail_2
-            fail = r_fail or ro_fail
-            fail_amount = 0.0
-            if fail:
-                if r_fail_1:
-                    fail_amount = max(fail_amount, r.max())
-                    r[r > 0.0] = 0.0
-                if r_fail_2:
-                    fail_amount = max(fail_amount, (-r-ebdy.radial_width).max())
-                    r[r < -ebdy.radial_width] = -ebdy.radial_width
-                if ro_fail_1:
-                    fail_amount = max(fail_amount, ro.max())
-                    ro[ro > 0.0] = 0.0
-                if ro_fail_2:
-                    fail_amount = max(fail_amount, (-ro-ebdy_old.radial_width).max())
-                    ro[ro < -ebdy_old.radial_width] = -ebdy_old.radial_width
-                # print('Failure! by: {:0.2e}'.format(fail_amount))
+                tol = 1e-12
+                while mres > tol:
+                    J = Jac(s, r, so, ro)
+                    d = np.linalg.solve(J, res)
+                    s  -= d[:,0]
+                    r  -= d[:,1]
+                    so -= d[:,2]
+                    ro -= d[:,3]
+                    res = objective(s, r, so, ro)
+                    mres1 = np.hypot(res[:,0], res[:,1]).max()
+                    mres2 = np.hypot(res[:,2], res[:,3]).max()
+                    mres = max(mres1, mres2)
+                r_fail_1 = r.max() > 0.0
+                r_fail_2 = r.min() < -ebdy.radial_width
+                ro_fail_1 = ro.max() > 0.0
+                ro_fail_2 = ro.min() < -ebdy_old.radial_width
+                r_fail = r_fail_1 or r_fail_2
+                ro_fail = ro_fail_1 or ro_fail_2
+                fail = r_fail or ro_fail
+                fail_amount = 0.0
+                if fail:
+                    if r_fail_1:
+                        fail_amount = max(fail_amount, r.max())
+                        r[r > 0.0] = 0.0
+                    if r_fail_2:
+                        fail_amount = max(fail_amount, (-r-ebdy.radial_width).max())
+                        r[r < -ebdy.radial_width] = -ebdy.radial_width
+                    if ro_fail_1:
+                        fail_amount = max(fail_amount, ro.max())
+                        ro[ro > 0.0] = 0.0
+                    if ro_fail_2:
+                        fail_amount = max(fail_amount, (-ro-ebdy_old.radial_width).max())
+                        ro[ro < -ebdy_old.radial_width] = -ebdy_old.radial_width
+                    print('Failure! by: {:0.2e}'.format(fail_amount))
 
-            # get the departure points
-            xd = bx_interp(s) + nx_interp(s)*r
-            yd = by_interp(s) + ny_interp(s)*r
-            xD = old_bx_interp(so) + old_nx_interp(so)*ro
-            yD = old_by_interp(so) + old_ny_interp(so)*ro
-            xd_all[fc3] = xd
-            yd_all[fc3] = yd
-            xD_all[fc3] = xD
-            yD_all[fc3] = yD
+                # get the departure points
+                xd = bx_interp(s) + nx_interp(s)*r
+                yd = by_interp(s) + ny_interp(s)*r
+                xD = old_bx_interp(so) + old_nx_interp(so)*ro
+                yD = old_by_interp(so) + old_ny_interp(so)*ro
+                xd_all[fc3l] = xd
+                yd_all[fc3l] = yd
+                xD_all[fc3l] = xD
+                yD_all[fc3l] = yD
 
         myprint('          Category 3 work: '.ljust(printjustment), '{:0.1f}'.format((time.time()-st)*100)); st=time.time()
 
@@ -661,31 +626,27 @@ while t < max_time-1e-10:
 
             # directly compute lapc instead of back-calculating it
             if not backcomputation:
-                cx, cy = ebdyc.gradient2(c)
-                cxx, _ = ebdyc.gradient2(cx)
-                _, cyy = ebdyc.gradient2(cy)
-                lapc = cxx + cyy
-
+                lapc = ebdyc.laplacian(c)
                 myprint('               direct lapc: '.ljust(printjustment), '{:0.1f}'.format((time.time()-subst)*100)); subst=time.time()
 
             # now interpolate to c
             subst = time.time()
             if use_danger_zone:
-                ch1 = ebdy.interpolate_to_points(c + 0.5*dt*nu*lapc - 1.5*dt*scaled_nonlinearity(c), xd_all, yd_all, True, new_ebdy.in_danger_zone, new_ebdy.guess_inds)
+                ch1 = ebdyc.interpolate_to_points(c + 0.5*dt*nu*lapc - 1.5*dt*scaled_nonlinearity(c), xd_all, yd_all, fix_r=True, dzl=new_ebdyc.danger_zone_list, gil=new_ebdyc.guess_ind_list)
             else:
-                ch1 = ebdy.interpolate_to_points(c + 0.5*dt*nu*lapc - 1.5*dt*scaled_nonlinearity(c), xd_all, yd_all, True)
+                ch1 = ebdyc.interpolate_to_points(c + 0.5*dt*nu*lapc - 1.5*dt*scaled_nonlinearity(c), xd_all, yd_all, fix_r=True)
             myprint('               interp1: '.ljust(printjustment), '{:0.1f}'.format((time.time()-subst)*100)); subst=time.time()
             if use_danger_zone:
-                ch2 = ebdy_old.interpolate_to_points(0.5*dt*scaled_nonlinearity(c_old), xD_all, yD_all, True, new_ebdy.in_danger_zone, new_ebdy.guess_inds)
+                ch2 = ebdyc_old.interpolate_to_points(0.5*dt*scaled_nonlinearity(c_old), xD_all, yD_all, fix_r=True, dzl=new_ebdyc.danger_zone_list, gil=new_ebdyc.guess_ind_list)
             else:
-                ch2 = ebdy_old.interpolate_to_points(0.5*dt*scaled_nonlinearity(c_old), xD_all, yD_all, True)
+                ch2 = ebdyc_old.interpolate_to_points(0.5*dt*scaled_nonlinearity(c_old), xD_all, yD_all, fix_r=True)
             myprint('               interp2: '.ljust(printjustment), '{:0.1f}'.format((time.time()-subst)*100)); subst=time.time()
             ch = ch1 + ch2
             # set the grid values
-            c_new.grid_value[new_ebdyc.phys_not_in_annulus] = ch[:gp.N]
+            c_new.grid_value[new_ebdyc.phys_not_in_annulus] = ch[:new_ebdyc.grid_pna_num]
             myprint('               fill: '.ljust(printjustment), '{:0.1f}'.format((time.time()-subst)*100)); subst=time.time()
             # set the radial values
-            c_new.radial_value_list[0][:] = ch[gp.N:].reshape(ebdy.radial_shape)
+            c_new.radial_value_list[0][:] = ch[new_ebdyc.grid_pna_num:].reshape(new_ebdyc[0].radial_shape)
             # overwrite under grid under annulus by radial grid
             _ = new_ebdyc.interpolate_radial_to_grid(c_new.radial_value_list, c_new.grid_value)
             myprint('               overwrite: '.ljust(printjustment), '{:0.1f}'.format((time.time()-subst)*100)); subst=time.time()
@@ -737,21 +698,21 @@ while t < max_time-1e-10:
 
             subst = time.time()
             if use_danger_zone:
-                ch1 = ebdy.interpolate_to_points((4/3)*c - (4/3)*dt*scaled_nonlinearity(c), xd_all, yd_all, True, new_ebdy.in_danger_zone, new_ebdy.guess_inds)
+                ch1 = ebdyc.interpolate_to_points((4/3)*c - (4/3)*dt*scaled_nonlinearity(c), xd_all, yd_all, fix_r=True, dzl=new_ebdyc.danger_zone_list, gil=new_ebdyc.guess_ind_list)
             else:
-                ch1 = ebdy.interpolate_to_points((4/3)*c - (4/3)*dt*scaled_nonlinearity(c), xd_all, yd_all, fix_r=True)
+                ch1 = ebdyc.interpolate_to_points((4/3)*c - (4/3)*dt*scaled_nonlinearity(c), xd_all, yd_all, fix_r=True)
             myprint('               interp1: '.ljust(printjustment), '{:0.1f}'.format((time.time()-subst)*100)); subst=time.time()
             if use_danger_zone:
-                ch2 = ebdy_old.interpolate_to_points((1/3)*c_old - (2/3)*dt*scaled_nonlinearity(c_old), xD_all, yD_all, True, new_ebdy.in_danger_zone, new_ebdy.guess_inds)
+                ch2 = ebdyc_old.interpolate_to_points((1/3)*c_old - (2/3)*dt*scaled_nonlinearity(c_old), xD_all, yD_all, fix_r=True, dzl=new_ebdyc.danger_zone_list, gil=new_ebdyc.guess_ind_list)
             else:
-                ch2 = ebdy_old.interpolate_to_points((1/3)*c_old - (2/3)*dt*scaled_nonlinearity(c_old), xD_all, yD_all, fix_r=True)
+                ch2 = ebdyc_old.interpolate_to_points((1/3)*c_old - (2/3)*dt*scaled_nonlinearity(c_old), xD_all, yD_all, fix_r=True)
             myprint('               interp2: '.ljust(printjustment), '{:0.1f}'.format((time.time()-subst)*100)); subst=time.time()
             ch = ch1 - ch2
             # set the grid values
-            c_new.grid_value[new_ebdyc.phys_not_in_annulus] = ch[:gp.N]
+            c_new.grid_value[new_ebdyc.phys_not_in_annulus] = ch[:new_ebdyc.grid_pna_num]
             myprint('               fill: '.ljust(printjustment), '{:0.1f}'.format((time.time()-subst)*100)); subst=time.time()
             # set the radial values
-            c_new.radial_value_list[0][:] = ch[gp.N:].reshape(ebdy.radial_shape)
+            c_new.radial_value_list[0][:] = ch[new_ebdyc.grid_pna_num:].reshape(new_ebdyc[0].radial_shape)
             # overwrite under grid under annulus by radial grid
             _ = new_ebdyc.interpolate_radial_to_grid(c_new.radial_value_list, c_new.grid_value)
             myprint('               overwrite: '.ljust(printjustment), '{:0.1f}'.format((time.time()-subst)*100)); subst=time.time()
@@ -856,10 +817,11 @@ if False:
     # bdf (solution stays smooth for all of them, even at small timesteps)
     diffs_bdf_200_12_2_2 = [np.nan, 4.43e-03, 1.06e-03, 3.17e-03, 3.61e-02]
     # diffs_bdf_200_16_2_2 = [np.nan, 4.41e-03, 1.02e-03, 2.92e-04, 1.80e-03]
-    diffs_bdf_300_24_2_2 = [np.nan, 4.42e-03, 1.02e-03, 2.55e-04, 6.31e-05]
+    diffs_bdf_300_24_2_2 = [np.nan, 4.42e-03, 1.02e-03, 2.55e-04, 6.31e-05, 1.85e-05]
 
     ##### polyi; fourth; pad=0; fsuf=4; tmax=1.1
     diffs_bdf_200_12_2_2 = [np.nan, 8.56e-03, 4.37e-03, 1.83e-03, 3.37e-02, 2.85e-01]
+    diffs_bdf_300_24_2_2 = [np.nan, 4.38e-03, 1.06e-03, 2.94e-04, 7.22e-05, ]
 
     ##### polyi; fourth; pad=0; fsuf=4; tmax=6.0 (nice and smooth!)
     diffs_bdf_200_12_2_2 = [np.nan, 1.83e-04, 4.19e-05, 1.58e-04, 'SMOOTH!']

@@ -1,7 +1,9 @@
 import numpy as np
 from personal_utilities.arc_length_reparametrization import arc_length_parameterize
 from ipde.embedded_boundary import EmbeddedBoundary
-from ipde.ebdy_collection import EmbeddedBoundaryCollection, EmbeddedFunction, BoundaryFunction
+# from ipde.ebdy_collection import EmbeddedBoundaryCollection, EmbeddedFunction, BoundaryFunction
+from ipde.ebdy_collection import EmbeddedBoundaryCollection, BoundaryFunction
+from ipde.embedded_function import EmbeddedFunction
 from fast_interp import interp1d
 
 class SecondOrder_Advector(object):
@@ -12,19 +14,51 @@ class SecondOrder_Advector(object):
         self.ebdyc = ebdyc
         self.u = u
         self.v = v
-        self.old_advector = old_advector
-        self.ebdyc_old = self.old_advector.ebdyc
-        self.uo = self.old_advector.u
-        self.vo = self.old_advector.v
-        self.ubos = self.old_advector.reparmed_ubs
-        self.vbos = self.old_advector.reparmed_vbs
+        self.ebdyc_old = old_advector.ebdyc
+        self.uo = old_advector.u.copy()
+        self.vo = old_advector.v.copy()
+        self.ubos = old_advector.reparmed_ubs.copy()
+        self.vbos = old_advector.reparmed_vbs.copy()
         self.ux, self.uy = self.ebdyc.gradient(self.u)
         self.vx, self.vy = self.ebdyc.gradient(self.v)
-        self.uxo = self.old_advector.ux
-        self.uyo = self.old_advector.uy
-        self.vxo = self.old_advector.vx
-        self.vyo = self.old_advector.vy
+        self.uxo = old_advector.ux.copy()
+        self.uyo = old_advector.uy.copy()
+        self.vxo = old_advector.vx.copy()
+        self.vyo = old_advector.vy.copy()
         self.filter_function = filter_function
+        del old_advector
+    # def __del__(self):
+    #     for thing in self.reparmed_ubs:
+    #         del thing
+    #     for thing in self.reparmed_vbs:
+    #         del thing
+    #     del self.reparmed_ubs
+    #     del self.reparmed_vbs
+    #     del self.new_ebdyc
+    #     del self.xd_all
+    #     del self.yd_all
+    #     del self.xD_all
+    #     del self.yD_all
+    #     del self.u
+    #     del self.v
+    #     del self.ebdyc_old
+    #     del self.uo
+    #     del self.vo
+    #     for thing in self.ubos:
+    #         del thing
+    #     for thing in self.vbos:
+    #         del thing
+    #     del self.ubos
+    #     del self.vbos
+    #     del self.ux
+    #     del self.uy
+    #     del self.vx
+    #     del self.vy
+    #     del self.uxo
+    #     del self.uyo
+    #     del self.vxo
+    #     del self.vyo
+    #     del self.filter_function
     def generate(self, dt):
         ebdyc = self.ebdyc
         ebdyc_old = self.ebdyc_old
@@ -162,10 +196,10 @@ class SecondOrder_Advector(object):
                 ny_interp  = interp(ebdy.bdy.normal_y)
                 nxs_interp = interp(d1_der(ebdy.bdy.normal_x))
                 nys_interp = interp(d1_der(ebdy.bdy.normal_y))
-                urb = ebdy.interpolate_radial_to_boundary_normal_derivative(u.radial_value_list[0])
-                vrb = ebdy.interpolate_radial_to_boundary_normal_derivative(v.radial_value_list[0])
-                urrb = ebdy.interpolate_radial_to_boundary_normal_derivative2(u.radial_value_list[0])
-                vrrb = ebdy.interpolate_radial_to_boundary_normal_derivative2(v.radial_value_list[0])
+                urb = ebdy.interpolate_radial_to_boundary_normal_derivative(u[0])
+                vrb = ebdy.interpolate_radial_to_boundary_normal_derivative(v[0])
+                urrb = ebdy.interpolate_radial_to_boundary_normal_derivative2(u[0])
+                vrrb = ebdy.interpolate_radial_to_boundary_normal_derivative2(v[0])
                 ub_interp   = interp(ub)
                 vb_interp   = interp(vb)
                 urb_interp  = interp(urb)
@@ -187,12 +221,12 @@ class SecondOrder_Advector(object):
                 old_ny_interp  = interp(ebdy_old.bdy.normal_y)
                 old_nxs_interp = interp(d1_der(ebdy_old.bdy.normal_x))
                 old_nys_interp = interp(d1_der(ebdy_old.bdy.normal_y))
-                old_ub = ebdy_old.interpolate_radial_to_boundary(uo.radial_value_list[0])
-                old_vb = ebdy_old.interpolate_radial_to_boundary(vo.radial_value_list[0])
-                old_urb = ebdy_old.interpolate_radial_to_boundary_normal_derivative(uo.radial_value_list[0])
-                old_vrb = ebdy_old.interpolate_radial_to_boundary_normal_derivative(vo.radial_value_list[0])
-                old_urrb = ebdy_old.interpolate_radial_to_boundary_normal_derivative2(uo.radial_value_list[0])
-                old_vrrb = ebdy_old.interpolate_radial_to_boundary_normal_derivative2(vo.radial_value_list[0])
+                old_ub = ebdy_old.interpolate_radial_to_boundary(uo[0])
+                old_vb = ebdy_old.interpolate_radial_to_boundary(vo[0])
+                old_urb = ebdy_old.interpolate_radial_to_boundary_normal_derivative(uo[0])
+                old_vrb = ebdy_old.interpolate_radial_to_boundary_normal_derivative(vo[0])
+                old_urrb = ebdy_old.interpolate_radial_to_boundary_normal_derivative2(uo[0])
+                old_vrrb = ebdy_old.interpolate_radial_to_boundary_normal_derivative2(vo[0])
                 # i think the old parm is right, but should think about
                 old_ub_interp   = interp(old_ub)
                 old_vb_interp   = interp(old_vb)
@@ -311,10 +345,16 @@ class SecondOrder_Advector(object):
         fh2 = self.ebdyc_old.interpolate_to_points(fo, self.xD_all, self.yD_all, fix_r=True, dzl=new_ebdyc.danger_zone_list, gil=new_ebdyc.guess_ind_list)
         fh = fh1 + fh2
         # set the grid values
-        f_new.grid_value[new_ebdyc.phys_not_in_annulus] = fh[:new_ebdyc.grid_pna_num]
+        # f_new.grid_value[new_ebdyc.phys_not_in_annulus] = fh[:new_ebdyc.grid_pna_num]
+        # this is pretty hacky here!
+        # f_new.grid_value[new_ebdyc.phys_not_in_annulus[new_ebdyc.phys]] = fh[:new_ebdyc.grid_pna_num]
+        f_new['grid'][new_ebdyc.phys_not_in_annulus[new_ebdyc.phys]] = fh[:new_ebdyc.grid_pna_num]
         # set the radial values (needs to be upgraded to a loop!)
         f_new[0][:] = fh[new_ebdyc.grid_pna_num:].reshape(new_ebdyc[0].radial_shape)
         # overwrite under grid under annulus by radial grid
-        new_ebdyc.update_radial_to_grid(f_new)
+        new_ebdyc.update_radial_to_grid2(f_new)
 
         return f_new
+
+    def remove_refs(self):
+        del self.ebdyc_old

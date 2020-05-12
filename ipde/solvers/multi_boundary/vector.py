@@ -1,6 +1,8 @@
 import numpy as np
 from ...derivatives import fourier, fd_x_4, fd_y_4
-from ...ebdy_collection import EmbeddedFunction, BoundaryFunction
+# from ...ebdy_collection import EmbeddedFunction, BoundaryFunction
+from ...ebdy_collection import BoundaryFunction
+from ...embedded_function import EmbeddedFunction
 
 class VectorSolver(object):
     def __init__(self, ebdyc, solver_type='spectral', AS_list=None, **kwargs):
@@ -49,8 +51,8 @@ class VectorSolver(object):
         # separate the components
         fuc = fu.get_smoothed_grid_value()
         fvc = fv.get_smoothed_grid_value()
-        fur_list = fu.radial_value_list
-        fvr_list = fv.radial_value_list
+        fur_list = fu.get_radial_value_list()
+        fvr_list = fv.get_radial_value_list()
         uc, vc, pc = self._grid_solve(fuc, fvc)
         # interpolate the solution to the interface
         bus = self.ebdyc.interpolate_grid_to_interface(uc, order=self.interpolation_order, cutoff=False)
@@ -88,9 +90,9 @@ class VectorSolver(object):
         single_ebdy = len(self.ebdyc) == 1
         urs, vrs, prs = zip(*[helper.correct(bu, bv, bp, single_ebdy) for helper, bu, bv, bp in zip(self.helpers, bus, bvs, bps)])
         # interpolate urs onto uc
-        _ = self.ebdyc.interpolate_radial_to_grid(urs, uc)
-        _ = self.ebdyc.interpolate_radial_to_grid(vrs, vc)
-        _ = self.ebdyc.interpolate_radial_to_grid(prs, pc)
+        _ = self.ebdyc.interpolate_radial_to_grid1(urs, uc)
+        _ = self.ebdyc.interpolate_radial_to_grid1(vrs, vc)
+        _ = self.ebdyc.interpolate_radial_to_grid1(prs, pc)
         uc *= self.ebdyc.phys
         vc *= self.ebdyc.phys
         pc *= self.ebdyc.phys

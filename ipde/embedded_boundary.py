@@ -77,7 +77,7 @@ class EmbeddedBoundary(object):
         self.kwargs = kwargs
 
     def regenerate(self, bx, by):
-        bdy = GSB(x=bx, y=by)
+        bdy = GSB(x=bx.copy(), y=by.copy())
         return EmbeddedBoundary(bdy, self.interior, self.M, self.h, **self.kwargs)
 
     def register_grid(self, grid, close, int_helper1, int_helper2, float_helper, bool_helper, index, danger_zone_distance=None, verbose=False):
@@ -164,6 +164,12 @@ class EmbeddedBoundary(object):
 
     ############################################################################
     # Functions relating to the radial grid
+
+    def register_ia_inds(self, phys_inds):
+        """
+        Get in_annulus indeces into physical only array
+        """
+        self.ia_inds = phys_inds[self.grid_ia_xind, self.grid_ia_yind]
 
     def _generate_radial_grid(self):
         bdy = self.bdy
@@ -313,13 +319,24 @@ class EmbeddedBoundary(object):
         diagnostic = finufftpy.nufft2d2(transf_r, t, out, 1, 1e-14, funch, modeord=1)
         vals = out.real/np.prod(funch.shape)
         return vals
-    def interpolate_radial_to_grid(self, fr, f):
+    def interpolate_radial_to_grid1(self, fr, f):
         """
         Interpolate the function fr onto f in the part of the grid underlying
         This particular embedded boundary
+
+        f here is only the physical portion of the grid values of f
         """
         vals = self.interpolate_radial_to_points(fr, self.grid_ia_r_transf, self.grid_ia_t)
         f[self.grid_ia_xind, self.grid_ia_yind] = vals
+    def interpolate_radial_to_grid2(self, fr, f):
+        """
+        Interpolate the function fr onto f in the part of the grid underlying
+        This particular embedded boundary
+
+        f here is only the physical portion of the grid values of f
+        """
+        vals = self.interpolate_radial_to_points(fr, self.grid_ia_r_transf, self.grid_ia_t)
+        f[self.ia_inds] = vals
 
     ############################################################################
     # FUNCTIONS FOR MERGING (EXPERIMENTAL AND NOT USED)
@@ -373,8 +390,8 @@ class EmbeddedBoundary(object):
         This particular embedded boundary
         """
         fxr, fyr = self.radial_grid_derivatives(fr)
-        self.interpolate_radial_to_grid(fxr, fx)
-        self.interpolate_radial_to_grid(fyr, fy)
+        self.interpolate_radial_to_grid1(fxr, fx)
+        self.interpolate_radial_to_grid1(fyr, fy)
         return fxr, fyr
     def laplacian(self, lapf, fr):
         """
@@ -383,7 +400,7 @@ class EmbeddedBoundary(object):
         This particular embedded boundary
         """
         lapfr = self.radial_grid_laplacian(fr)
-        self.interpolate_radial_to_grid(lapfr, lapf)
+        self.interpolate_radial_to_grid1(lapfr, lapf)
         return lapfr
 
     ############################################################################

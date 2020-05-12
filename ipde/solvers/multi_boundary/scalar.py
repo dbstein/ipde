@@ -1,6 +1,8 @@
 import numpy as np
 from ...derivatives import fourier, fd_x_4, fd_y_4
-from ...ebdy_collection import EmbeddedFunction, BoundaryFunction
+# from ...ebdy_collection import EmbeddedFunction, BoundaryFunction
+from ...ebdy_collection import BoundaryFunction
+from ...embedded_function import EmbeddedFunction
 
 class ScalarSolver(object):
     def __init__(self, ebdyc, solver_type='spectral', AS_list=None, **kwargs):
@@ -44,8 +46,8 @@ class ScalarSolver(object):
             self.dy = lambda x: fd_y_4(x, self.ebdyc.grid.yh)
     def get_boundary_values(self, urs):
         use_ef = type(urs) == EmbeddedFunction
-        if use_ef:
-            _, _, urs = urs.get_components()
+        # if use_ef:
+        #     _, _, urs = urs.get_components()
         bv_list = [helper.get_boundary_values(ur) for ur, helper in zip(urs, self.helpers)]
         if use_ef:
             bv = BoundaryFunction(self.ebdyc)
@@ -66,8 +68,9 @@ class ScalarSolver(object):
         if fr_list is None and not use_ef:
             raise Exception('If fr_list is not provided, f must be of type EmbeddedFunction')
         if use_ef:
-            fc = f.get_smoothed_grid_value()
-            fr_list = f.radial_value_list
+            _, fc, fr_list = f.get_components()
+            # fc = f.get_smoothed_grid_value()
+            # fr_list = f.radial_value_list
         else:
             fc = f*self.grid_step
         # get the grid-based solution
@@ -95,7 +98,7 @@ class ScalarSolver(object):
         # we have to send the bslps back to the indivdual ebdys to deal with them
         urs = [helper.correct(bu) for helper, bu in zip(self.helpers, bus)]
         # interpolate urs onto uc
-        _ = self.ebdyc.interpolate_radial_to_grid(urs, uc)
+        _ = self.ebdyc.interpolate_radial_to_grid1(urs, uc)
         uc *= self.ebdyc.phys
         if use_ef:
             ue = EmbeddedFunction(self.ebdyc)

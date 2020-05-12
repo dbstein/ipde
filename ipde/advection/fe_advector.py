@@ -1,7 +1,9 @@
 import numpy as np
 from personal_utilities.arc_length_reparametrization import arc_length_parameterize
 from ipde.embedded_boundary import EmbeddedBoundary
-from ipde.ebdy_collection import EmbeddedBoundaryCollection, EmbeddedFunction, BoundaryFunction
+# from ipde.ebdy_collection import EmbeddedBoundaryCollection, EmbeddedFunction, BoundaryFunction
+from ipde.ebdy_collection import EmbeddedBoundaryCollection, BoundaryFunction
+from ipde.embedded_function import EmbeddedFunction
 from fast_interp import interp1d
 
 class FE_Advector(object):
@@ -168,11 +170,14 @@ class FE_Advector(object):
         # semi-lagrangian interpolation
         fh = self.ebdyc.interpolate_to_points(f, self.xd_all, self.yd_all, fix_r=True, dzl=new_ebdyc.danger_zone_list, gil=new_ebdyc.guess_ind_list)
         # set the grid values
-        f_new.grid_value[new_ebdyc.phys_not_in_annulus] = fh[:new_ebdyc.grid_pna_num]
+        # f_new.grid_value[new_ebdyc.phys_not_in_annulus] = fh[:new_ebdyc.grid_pna_num]
+        # this is pretty hacky here!
+        # f_new.grid_value[new_ebdyc.phys_not_in_annulus[new_ebdyc.phys]] = fh[:new_ebdyc.grid_pna_num]
+        f_new['grid'][new_ebdyc.phys_not_in_annulus[new_ebdyc.phys]] = fh[:new_ebdyc.grid_pna_num]
         # set the radial values (needs to be upgraded to a loop!)
         f_new[0][:] = fh[new_ebdyc.grid_pna_num:].reshape(new_ebdyc[0].radial_shape)
         # overwrite under grid under annulus by radial grid
-        new_ebdyc.update_radial_to_grid(f_new)
+        new_ebdyc.update_radial_to_grid2(f_new)
 
         return f_new
 

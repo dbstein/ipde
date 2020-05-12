@@ -10,6 +10,8 @@ from ipde.utilities import affine_transformation
 from ipde.annular.annular import ApproximateAnnularGeometry
 from ipde.derivatives import fd_x_4, fd_y_4, fourier
 
+from ipde.embedded_function import EmbeddedFunction
+
 def merge_sources(src_list):
     """
     Merge sources.  This is only sufficient for single layers.
@@ -54,8 +56,7 @@ class EmbeddedPointPartition(object):
                 the "danger zone list", giving initial guesses for the
                 coordinate solving scheme
         """
-        self.ebdyc = ebdyc
-        self.grid = self.ebdyc.grid
+        self.grid = ebdyc.grid
         self.x_check = x
         self.y_check = y
         self.fix_r = fix_r
@@ -69,7 +70,7 @@ class EmbeddedPointPartition(object):
             self.has_danger_zone = [dz is not None and gi is not None for
                                         dz, gi in zip(self.dzl, self.gil)]
         else:
-            self.has_danger_zone = [None,]*len(self.ebdyc)
+            self.has_danger_zone = [None,]*len(ebdyc)
         # zone 1 is physical and not inside an annulus
         zone1 = np.ones(self.size, dtype=bool)
         zone1_or_2 = np.ones(self.size, dtype=bool)
@@ -219,8 +220,6 @@ class EmbeddedBoundaryCollection(object):
 
         # storage for registered x / y for interpolation to
         # general sets of points
-        self.registered_xs = []
-        self.registered_ys = []
         self.registered_partitions = []
 
         # information for solvers that require bumpy functions
@@ -265,12 +264,17 @@ class EmbeddedBoundaryCollection(object):
                 ebdy.near_curve_result, phys, inside=ebdy.interior)
         self.phys = phys
         self.ext = np.logical_not(self.phys)
+        self.phys_inds = np.zeros(grid.shape, dtype=int)
+        self.phys_n = np.sum(self.phys)
+        self.phys_inds[self.phys] = np.arange(self.phys_n)
 
         # Fourier operators
         kxv = np.fft.fftfreq(grid.Nx, grid.xh/(2*np.pi))
         kyv = np.fft.fftfreq(grid.Ny, grid.yh/(2*np.pi))
-        self.kx, self.ky = np.meshgrid(kxv, kyv, indexing='ij')
-        self.ikx, self.iky = 1j*self.kx, 1j*self.ky
+        self.kx = kxv[:,None]
+        self.ky = kyv
+        self.ikx = 1j*self.kx
+        self.iky = 1j*self.ky
         self.lap = -self.kx*self.kx - self.ky*self.ky
 
         # get in_annulus indeces
@@ -280,6 +284,9 @@ class EmbeddedBoundaryCollection(object):
         ia[iax, iay] = True
         self.in_annulus = ia
         self.phys_not_in_annulus = np.logical_and(self.phys, np.logical_not(self.in_annulus))
+        # register ia_inds for each ebdy
+        for ebdy in self:
+            ebdy.register_ia_inds(self.phys_inds)
 
         # construct the full grid_step
         self.grid_step = self.phys.astype(float)
@@ -441,8 +448,7 @@ class EmbeddedBoundaryCollection(object):
     ############################################################################
     # Functions for communicating between grids / interfaces / boundaries
     def interpolate_radial_to_boundary(self, f):
-        fr_list = f.get_radial_value_list()
-        fb_list = [ebdy.interpolate_radial_to_boundary(fr) for ebdy, fr in zip(self.ebdys, fr_list)]
+        fb_list = [ebdy.interpolate_radial_to_boundary(fr) for ebdy, fr in zip(self.ebdys, f)]
         out = BoundaryFunction(self)
         out.load_data(fb_list)
         return out
@@ -486,10 +492,18 @@ class EmbeddedBoundaryCollection(object):
         out = np.zeros(self.interfaces_x_transf.size, dtype=complex)
         diagnostic = finufftpy.nufft2d2(self.interfaces_x_transf, self.interfaces_y_transf, out, 1, 1e-14, funch, modeord=1)
         return out.real/np.prod(funch.shape)
-    def update_radial_to_grid(self, f):
-        _ = self.interpolate_radial_to_grid(f.radial_value_list, f.grid_value)
-    def interpolate_radial_to_grid(self, fr_list, f=None):
-        return [ebdy.interpolate_radial_to_grid(fr, f) for ebdy, fr in zip(self.ebdys, fr_list)]
+    def update_radial_to_grid1(self, f):
+        # _, fg, fr = f.get_components()
+        _ = self.interpolate_radial_to_grid1(f.get_radial_value_list(), f['grid'])
+        # _ = self.interpolate_radial_to_grid(f, fg)
+    def interpolate_radial_to_grid1(self, fr_list, f=None):
+        return [ebdy.interpolate_radial_to_grid1(fr, f) for ebdy, fr in zip(self.ebdys, fr_list)]
+    def update_radial_to_grid2(self, f):
+        # _, fg, fr = f.get_components()
+        _ = self.interpolate_radial_to_grid2(f.get_radial_value_list(), f['grid'])
+        # _ = self.interpolate_radial_to_grid(f, fg)
+    def interpolate_radial_to_grid2(self, fr_list, f=None):
+        return [ebdy.interpolate_radial_to_grid2(fr, f) for ebdy, fr in zip(self.ebdys, fr_list)]
     def merge_grids(self, f):
         for ebdy, fr in zip(self.ebdys, f.radial_value_list):
             ebdy.merge_grids(f.grid_value, fr)
@@ -602,7 +616,7 @@ class EmbeddedBoundaryCollection(object):
         # compute on the radial grid
         fxrs, fyrs = [], []
         for i in range(self.N):
-            fxr, fyr = self.ebdys[i].gradient(fx, fy, fr_list[i])
+            fxr, fyr = self[i].gradient(fx, fy, fr_list[i])
             fxrs.append(fxr)
             fyrs.append(fyr)
         # set to 0 on regular grid in the exterior region
@@ -765,137 +779,139 @@ class EmbeddedBoundaryCollection(object):
 #         copy[:] = self
 #         return copy
 
-class EmbeddedFunction(np.ma.MaskedArray):
-    def __new__(cls, ebdyc, dtype=float):
-        gn = np.product(ebdyc.grid.shape)
-        rn = np.sum([np.product(ebdy.radial_shape) for ebdy in ebdyc.ebdys])
-        n = gn + rn
-        ext = np.concatenate([ ebdyc.ext.ravel(), np.zeros(rn) ])
-        self = super(EmbeddedFunction, cls).__new__(cls, np.zeros(n, dtype=dtype), mask=ext)
-        # extra things required for this class
-        self.ebdyc = ebdyc
-        self.RN = len(self.ebdyc.ebdys)
-        self.grid = ebdyc.grid
-        self.sh = self.grid.shape
-        self.phys = ebdyc.phys
-        self.ext = ebdyc.ext
-        self.gpx = ebdyc.grid_phys.x
-        self.gpy = ebdyc.grid_phys.y
-        self.n_grid = np.product(self.sh)
-        self.radial_shape_list = [ebdy.radial_shape for ebdy in self.ebdyc.ebdys]
-        self.n_radial_list = [np.product(sh) for sh in self.radial_shape_list]
-        self.n_radial = np.sum(self.n_radial_list)
-        self.n_data = self.n_grid + self.n_radial
-        self.dof = ebdyc.grid_phys.N + self.n_radial
-        self._generate_accessors()
-        return self
-    def __getitem__(self, ind):
-        return self.radial_value_list[ind]
-    def __setitem__(self, ind, value):
-        self.radial_value_list[ind] = value
-    def _generate_accessors(self):
-        # accessor for grid/radial data into masked data
-        self.gdata = np.ma.array(self.data[:self.n_grid], mask=self.mask[:self.n_grid])
-        self.rdata = self.data[self.n_grid:]
-        # easy accessors to properly shaped/masked grid/radial arrays
-        self.grid_value = np.ma.array(self.data[:self.n_grid].reshape(self.sh), mask=self.ext)
-        self.radial_value_list = []
-        start = self.n_grid
-        for i in range(self.RN):
-            sh = self.radial_shape_list[i]
-            n = self.n_radial_list[i]
-            end = start + n
-            self.radial_value_list.append(self.data[start:end].reshape(sh))
-            start = end
-    def _update_from(self, obj):
-        super(EmbeddedFunction, self)._update_from(obj)
-        if hasattr(obj, '_mask') and not hasattr(self, '_mask'): self._mask = obj._mask
-        if hasattr(obj, '_mask') and not hasattr(self, '_mask'): self._mask = obj._mask
-        if hasattr(obj, 'ebdyc'):
-            # copy required objects from obj to self
-            self.ebdyc             = obj.ebdyc
-            self.RN                = obj.RN
-            self.grid              = obj.grid
-            self.sh                = obj.grid.shape
-            self.gpx               = obj.gpx
-            self.gpy               = obj.gpy
-            self.n_grid            = obj.n_grid
-            self.radial_shape_list = obj.radial_shape_list
-            self.n_radial_list     = obj.n_radial_list
-            self.n_radial          = obj.n_radial
-            self.n_data            = obj.n_data
-            self.dof               = obj.dof
-            self.ext = self._mask[:self.n_grid].reshape(self.sh)
-            self.phys = np.logical_not(self.ext).reshape(self.sh)
-            # regenerate accessors
+if False:
+
+    class EmbeddedFunction(np.ma.MaskedArray):
+        def __new__(cls, ebdyc, dtype=float):
+            gn = np.product(ebdyc.grid.shape)
+            rn = np.sum([np.product(ebdy.radial_shape) for ebdy in ebdyc.ebdys])
+            n = gn + rn
+            ext = np.concatenate([ ebdyc.ext.ravel(), np.zeros(rn) ])
+            self = super(EmbeddedFunction, cls).__new__(cls, np.zeros(n, dtype=dtype), mask=ext)
+            # extra things required for this class
+            self.ebdyc = ebdyc
+            self.RN = len(self.ebdyc.ebdys)
+            self.grid = ebdyc.grid
+            self.sh = self.grid.shape
+            self.phys = ebdyc.phys
+            self.ext = ebdyc.ext
+            self.gpx = ebdyc.grid_phys.x
+            self.gpy = ebdyc.grid_phys.y
+            self.n_grid = np.product(self.sh)
+            self.radial_shape_list = [ebdy.radial_shape for ebdy in self.ebdyc.ebdys]
+            self.n_radial_list = [np.product(sh) for sh in self.radial_shape_list]
+            self.n_radial = np.sum(self.n_radial_list)
+            self.n_data = self.n_grid + self.n_radial
+            self.dof = ebdyc.grid_phys.N + self.n_radial
             self._generate_accessors()
-    def load_data(self, grid_value, radial_value_list):
-        dl = [grid_value.ravel(),]
-        for rv in radial_value_list:
-            dl.append(rv.ravel())
-        self.data[:] = np.concatenate(dl)
-    def define_via_function(self, f):
-        self.grid_value[self.phys] = f(self.gpx, self.gpy)
-        for rv, ebdy in zip(self.radial_value_list, self.ebdyc.ebdys):
-            rv[:] = f(ebdy.radial_x, ebdy.radial_y)
-    def zero(self):
-        self.data[:] = 0.0
-    def plot(self, ax, **kwargs):
-        xv = self.grid.xg
-        yv = self.grid.yg
-        xh = self.grid.xh
-        yh = self.grid.yh
-        gv = self.grid_value
-        vmin = self.min()
-        vmax = self.max()
-        if 'vmin' not in kwargs:
-            kwargs['vmin'] = vmin
-            kwargs['vmax'] = vmax
-        clf = ax.pcolor(xv-0.5*xh, yv-0.5*yh, gv, **kwargs)
-        for ebdy, fr in zip(self.ebdyc.ebdys, self.radial_value_list):
-            x = ebdy.plot_radial_x
-            y = ebdy.plot_radial_y
-            ax.pcolor(x, y, fr, **kwargs)
-        return clf    
-    def get_radial_value_list(self):
-        return self.radial_value_list
-    def get_grid_value(self):
-        return self.grid_value
-    def get_smoothed_grid_value(self):
-        arr = np.array(self.grid_value)
-        arr[self.ext] = 0.0
-        return arr*self.ebdyc.grid_step
-    def get_grid_phys_value(self):
-        return self.grid_value[self.phys]
-    def get_components(self):
-        return self.grid_value, self.get_grid_phys_value(), self.radial_value_list
-    def radial_min(self):
-        return np.min(self.rdata)
-    def radial_max(self):
-        return np.max(self.rdata)
-    def grid_min(self):
-        return np.min(self.gdata)
-    def grid_max(self):
-        return np.max(self.gdata)
-    def __str__(self):
-        string = 'Physical Grid Values:\n' + self.get_grid_phys_value().__str__() + \
-            '\nRadial Values (first 5 embedded boundaries):\n'
-        for i in range(min(len(self.radial_value_list), 5)):
-            string += 'Embedded Boundary ' + str(i) + '\n'
-            string += self.radial_value_list[i].__str__()
-            if i < 4: string += '\n'
-        return string
-    def __repr__(self):
-        return self.__str__()
-    def copy(self):
-        copy = EmbeddedFunction(self.ebdyc, self.dtype)
-        copy.data[:] = self.data
-        return copy
-    def get_linear_data(self):
-        return self.data[~self.mask]
-    def load_linear_data(self, data):
-        self.data[:] = 0.0
-        self.data[~self.mask] = data
+            return self
+        def __getitem__(self, ind):
+            return self.radial_value_list[ind]
+        def __setitem__(self, ind, value):
+            self.radial_value_list[ind] = value
+        def _generate_accessors(self):
+            # accessor for grid/radial data into masked data
+            self.gdata = np.ma.array(self.data[:self.n_grid], mask=self.mask[:self.n_grid])
+            self.rdata = self.data[self.n_grid:]
+            # easy accessors to properly shaped/masked grid/radial arrays
+            self.grid_value = np.ma.array(self.data[:self.n_grid].reshape(self.sh), mask=self.ext)
+            self.radial_value_list = []
+            start = self.n_grid
+            for i in range(self.RN):
+                sh = self.radial_shape_list[i]
+                n = self.n_radial_list[i]
+                end = start + n
+                self.radial_value_list.append(self.data[start:end].reshape(sh))
+                start = end
+        def _update_from(self, obj):
+            super(EmbeddedFunction, self)._update_from(obj)
+            if hasattr(obj, '_mask') and not hasattr(self, '_mask'): self._mask = obj._mask
+            if hasattr(obj, '_mask') and not hasattr(self, '_mask'): self._mask = obj._mask
+            if hasattr(obj, 'ebdyc'):
+                # copy required objects from obj to self
+                self.ebdyc             = obj.ebdyc
+                self.RN                = obj.RN
+                self.grid              = obj.grid
+                self.sh                = obj.grid.shape
+                self.gpx               = obj.gpx
+                self.gpy               = obj.gpy
+                self.n_grid            = obj.n_grid
+                self.radial_shape_list = obj.radial_shape_list
+                self.n_radial_list     = obj.n_radial_list
+                self.n_radial          = obj.n_radial
+                self.n_data            = obj.n_data
+                self.dof               = obj.dof
+                self.ext = self._mask[:self.n_grid].reshape(self.sh)
+                self.phys = np.logical_not(self.ext).reshape(self.sh)
+                # regenerate accessors
+                self._generate_accessors()
+        def load_data(self, grid_value, radial_value_list):
+            dl = [grid_value.ravel(),]
+            for rv in radial_value_list:
+                dl.append(rv.ravel())
+            self.data[:] = np.concatenate(dl)
+        def define_via_function(self, f):
+            self.grid_value[self.phys] = f(self.gpx, self.gpy)
+            for rv, ebdy in zip(self.radial_value_list, self.ebdyc.ebdys):
+                rv[:] = f(ebdy.radial_x, ebdy.radial_y)
+        def zero(self):
+            self.data[:] = 0.0
+        def plot(self, ax, **kwargs):
+            xv = self.grid.xg
+            yv = self.grid.yg
+            xh = self.grid.xh
+            yh = self.grid.yh
+            gv = self.grid_value
+            vmin = self.min()
+            vmax = self.max()
+            if 'vmin' not in kwargs:
+                kwargs['vmin'] = vmin
+                kwargs['vmax'] = vmax
+            clf = ax.pcolor(xv-0.5*xh, yv-0.5*yh, gv, **kwargs)
+            for ebdy, fr in zip(self.ebdyc.ebdys, self.radial_value_list):
+                x = ebdy.plot_radial_x
+                y = ebdy.plot_radial_y
+                ax.pcolor(x, y, fr, **kwargs)
+            return clf    
+        def get_radial_value_list(self):
+            return self.radial_value_list
+        def get_grid_value(self):
+            return self.grid_value
+        def get_smoothed_grid_value(self):
+            arr = np.array(self.grid_value)
+            arr[self.ext] = 0.0
+            return arr*self.ebdyc.grid_step
+        def get_grid_phys_value(self):
+            return self.grid_value[self.phys]
+        def get_components(self):
+            return self.grid_value, self.get_grid_phys_value(), self.radial_value_list
+        def radial_min(self):
+            return np.min(self.rdata)
+        def radial_max(self):
+            return np.max(self.rdata)
+        def grid_min(self):
+            return np.min(self.gdata)
+        def grid_max(self):
+            return np.max(self.gdata)
+        def __str__(self):
+            string = 'Physical Grid Values:\n' + self.get_grid_phys_value().__str__() + \
+                '\nRadial Values (first 5 embedded boundaries):\n'
+            for i in range(min(len(self.radial_value_list), 5)):
+                string += 'Embedded Boundary ' + str(i) + '\n'
+                string += self.radial_value_list[i].__str__()
+                if i < 4: string += '\n'
+            return string
+        def __repr__(self):
+            return self.__str__()
+        def copy(self):
+            copy = EmbeddedFunction(self.ebdyc, self.dtype)
+            copy.data[:] = self.data
+            return copy
+        def get_linear_data(self):
+            return self.data[~self.mask]
+        def load_linear_data(self, data):
+            self.data[:] = 0.0
+            self.data[~self.mask] = data
 
 class BoundaryFunction(object):
     # I should make this subclass np.ndarray at some point?

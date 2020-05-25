@@ -1,7 +1,6 @@
 import numpy as np
 from personal_utilities.arc_length_reparametrization import arc_length_parameterize
 from ipde.embedded_boundary import EmbeddedBoundary
-# from ipde.ebdy_collection import EmbeddedBoundaryCollection, EmbeddedFunction, BoundaryFunction
 from ipde.ebdy_collection import EmbeddedBoundaryCollection, BoundaryFunction
 from ipde.embedded_function import EmbeddedFunction
 from fast_interp import interp1d
@@ -17,7 +16,11 @@ class FE_Advector(object):
         self.ux, self.uy = self.ebdyc.gradient(u)
         self.vx, self.vy = self.ebdyc.gradient(v)
         self.filter_function = filter_function
-    def generate(self, dt):
+    def generate(self, dt, fixed_grid=False):
+        """
+        If fixed_grid = True, reuse same grid
+        Otherwise, generate new grid
+        """
         ebdyc = self.ebdyc
         u, v = self.u, self.v
         ux, uy, vx, vy = self.ux, self.uy, self.vx, self.vy
@@ -56,7 +59,11 @@ class FE_Advector(object):
         # raise an exception if danger zone thicker than radial width
         if ddd > new_ebdyc[0].radial_width:
             raise Exception('Velocity is so fast that one timestep oversteps safety zones; reduce timestep.')
-        new_ebdyc.register_grid(ebdyc.grid, danger_zone_distance=ddd)
+        # register the grid...
+        if fixed_grid:
+            new_ebdyc.register_grid(ebdyc.grid, danger_zone_distance=ddd)
+        else:
+            new_ebdyc.generate_grid(danger_zone_distance=ddd)
 
         # let's get the points that need to be interpolated to
         aap = new_ebdyc.pnar

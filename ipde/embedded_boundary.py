@@ -12,6 +12,24 @@ from qfs.two_d_qfs import QFS_Boundary
 def setit(name, dictionary, default):
     return dictionary[name] if name in dictionary else default
 
+# quad weights for the chebyshev nodes i'm using
+def fejer_1(n):
+    points = -np.cos(np.pi * (np.arange(n) + 0.5) / n)
+    N = np.arange(1, n, 2)
+    length = len(N)
+    m = n - length
+    K = np.arange(m)
+    v0 = np.concatenate(
+        [
+            2 * np.exp(1j * np.pi * K / n) / (1 - 4 * K ** 2),
+            np.zeros(length + 1),
+        ]
+    )
+    v1 = v0[:-1] + np.conjugate(v0[:0:-1])
+    w = np.fft.ifft(v1)
+    weights = w.real
+    return points, weights
+
 class EmbeddedBoundary(object):
     def __init__(self, bdy, interior, M, h, **kwargs):
         """
@@ -247,6 +265,10 @@ class EmbeddedBoundary(object):
         # get PointSet for integration target
         self.radial_targ = PointSet(self.radial_x.ravel(), self.radial_y.ravel())
 
+        # get quadrature weights for radial grid
+        _, w = fejer_1(self.M)
+        self.radial_quadrature_weights = self.bdy.dt*w[:,None]*self.radial_width/2.0*self.radial_speed
+
     def check_if_r_in_annulus(self, r):
         """
         checks if r is in the annulus or not
@@ -435,4 +457,9 @@ class EmbeddedBoundary(object):
         self.bdy_outward_source = q.exterior_source_bdy if self.interior else q.interior_source_bdy
         # these are sources for evaluating from boundary into the physical region
         self.bdy_inward_source = q.interior_source_bdy if self.interior else q.exterior_source_bdy
+
+    ############################################################################
+    # Functions for integrating
+    def radial_integral(self, fr):
+        return np.sum(fr*self.radial_cutoff[:,None]*self.radial_quadrature_weights)
 

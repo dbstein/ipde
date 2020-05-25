@@ -29,4 +29,11 @@ class PoissonHelper(ScalarHelper):
                                 not self.interior, [self.Singular_SLP, self.Singular_DLP_E],
                                 self.Naive_SLP, on_surface=True, form_b2c=False)
     def _define_layer_apply(self):
-        self.Layer_Apply = lambda src, trg, ch: Laplace_Layer_Apply(src, trg, charge=ch)
+        def func(src, trg, ch):        
+            # xmin = min(src.x.min(), trg.x.min())
+            # xmax = max(src.x.max(), trg.x.max())
+            # ymin = min(src.y.min(), trg.y.min())
+            # ymax = max(src.y.max(), trg.y.max())
+            # return Laplace_Layer_Apply(src, trg, charge=ch, backend='KIFMM', bbox=[xmin, xmax, ymin, ymax], Nequiv=40, Ncutoff=20)
+            return Laplace_Layer_Apply(src, trg, charge=ch, backend='fly')
+        self.Layer_Apply = func

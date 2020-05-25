@@ -1,6 +1,5 @@
 import numpy as np
 from ...derivatives import fourier, fd_x_4, fd_y_4
-# from ...ebdy_collection import EmbeddedFunction, BoundaryFunction
 from ...ebdy_collection import BoundaryFunction
 from ...embedded_function import EmbeddedFunction
 

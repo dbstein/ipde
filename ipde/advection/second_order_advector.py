@@ -1,7 +1,6 @@
 import numpy as np
 from personal_utilities.arc_length_reparametrization import arc_length_parameterize
 from ipde.embedded_boundary import EmbeddedBoundary
-# from ipde.ebdy_collection import EmbeddedBoundaryCollection, EmbeddedFunction, BoundaryFunction
 from ipde.ebdy_collection import EmbeddedBoundaryCollection, BoundaryFunction
 from ipde.embedded_function import EmbeddedFunction
 from fast_interp import interp1d
@@ -15,6 +14,8 @@ class SecondOrder_Advector(object):
         self.u = u
         self.v = v
         self.ebdyc_old = old_advector.ebdyc
+        ### CHECK: DO ALL OF THESE COPIES REALLY NEED TO BE MADE?
+        ### NOW THAT I'VE FIXED THE LEAK, SHOULD CHECK...
         self.uo = old_advector.u.copy()
         self.vo = old_advector.v.copy()
         self.ubos = old_advector.reparmed_ubs.copy()
@@ -27,39 +28,7 @@ class SecondOrder_Advector(object):
         self.vyo = old_advector.vy.copy()
         self.filter_function = filter_function
         del old_advector
-    # def __del__(self):
-    #     for thing in self.reparmed_ubs:
-    #         del thing
-    #     for thing in self.reparmed_vbs:
-    #         del thing
-    #     del self.reparmed_ubs
-    #     del self.reparmed_vbs
-    #     del self.new_ebdyc
-    #     del self.xd_all
-    #     del self.yd_all
-    #     del self.xD_all
-    #     del self.yD_all
-    #     del self.u
-    #     del self.v
-    #     del self.ebdyc_old
-    #     del self.uo
-    #     del self.vo
-    #     for thing in self.ubos:
-    #         del thing
-    #     for thing in self.vbos:
-    #         del thing
-    #     del self.ubos
-    #     del self.vbos
-    #     del self.ux
-    #     del self.uy
-    #     del self.vx
-    #     del self.vy
-    #     del self.uxo
-    #     del self.uyo
-    #     del self.vxo
-    #     del self.vyo
-    #     del self.filter_function
-    def generate(self, dt):
+    def generate(self, dt, fixed_grid=False):
         ebdyc = self.ebdyc
         ebdyc_old = self.ebdyc_old
         u, v = self.u, self.v
@@ -102,7 +71,11 @@ class SecondOrder_Advector(object):
         # raise an exception if danger zone thicker than radial width
         if ddd > new_ebdyc[0].radial_width:
             raise Exception('Velocity is so fast that one timestep oversteps safety zones; reduce timestep.')
-        new_ebdyc.register_grid(ebdyc.grid, danger_zone_distance=ddd)
+        # register the grid...
+        if fixed_grid:
+            new_ebdyc.register_grid(ebdyc.grid, danger_zone_distance=ddd)
+        else:
+            new_ebdyc.generate_grid(danger_zone_distance=ddd)
 
         # let's get the points that need to be interpolated to
         aap = new_ebdyc.pnar
@@ -129,6 +102,9 @@ class SecondOrder_Advector(object):
         fc12n = np.sum(fc12)
 
         # category 1 and 2
+        # NOTE:  THESE INTERPOLATIONS CAN BE MADE FASTER BY EXPLOITING SHARED
+        #        GRIDPOINTS IF THAT IS ENFORCED IN GRID GENERATION
+        #        THIS IS NOT EXPLOITED, FOR THE TIME BEING
         uxh = ebdyc.interpolate_to_points(ux, aap.x, aap.y)
         uyh = ebdyc.interpolate_to_points(uy, aap.x, aap.y)
         vxh = ebdyc.interpolate_to_points(vx, aap.x, aap.y)

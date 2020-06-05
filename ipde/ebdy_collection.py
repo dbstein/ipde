@@ -259,8 +259,8 @@ class EmbeddedBoundaryCollection(object):
         yran = ymax - ymin
         # get h and Ns (conservatively for computing N)
         if h is None: h = iebdy.radial_width / iebdy.M
-        Nx = int(np.ceil(xran/h))
-        Ny = int(np.ceil(yran/h))
+        Nx = 2*int(0.5*np.ceil(xran/h))
+        Ny = 2*int(0.5*np.ceil(yran/h))
         # compute actual maximum bounds (minimum bounds are through definition)
         xmax = xmin + Nx*h
         ymax = ymin + Ny*h

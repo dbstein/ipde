@@ -19,8 +19,6 @@ class SecondOrder_Advector(object):
         ### NOW THAT I'VE FIXED THE LEAK, SHOULD CHECK...
         self.uo = old_advector.u.copy()
         self.vo = old_advector.v.copy()
-        self.ubos = old_advector.reparmed_ubs.copy()
-        self.vbos = old_advector.reparmed_vbs.copy()
         self.ux, self.uy = self.ebdyc.gradient(self.u)
         self.vx, self.vy = self.ebdyc.gradient(self.v)
         self.uxo = old_advector.ux.copy()
@@ -29,7 +27,7 @@ class SecondOrder_Advector(object):
         self.vyo = old_advector.vy.copy()
         self.filter_fraction = filter_fraction
         del old_advector
-    def generate(self, dt, fixed_grid=False):
+    def generate(self, bxs, bys, dt, fixed_grid=False):
         ebdyc = self.ebdyc
         ebdyc_old = self.ebdyc_old
         u, v = self.u, self.v
@@ -43,43 +41,29 @@ class SecondOrder_Advector(object):
 
         # move all boundarys; generate new embedded boundaries
         new_ebdys = []
-        self.reparmed_ubs = []
-        self.reparmed_vbs = []
         for ind, ebdy in enumerate(self.ebdyc):
-            if False: # this is the ABF way
-                # interpolate the velocity
-                ub = ubs.bdy_value_list[ind]
-                vb = vbs.bdy_value_list[ind]
-                ubo_new_parm = self.ubos[ind]
-                vbo_new_parm = self.vbos[ind]
-                # move the boundary with Forward Euler
-                bx = ebdy.bdy.x + 0.5*dt*(3*ub - ubo_new_parm)
-                by = ebdy.bdy.y + 0.5*dt*(3*vb - vbo_new_parm)
-                # repararmetrize the boundary
-                bx, by, new_t = arc_length_parameterize(bx, by, filter_fraction=self.filter_fraction, return_t=True)
-                # move these boundary values for velocity to the new parametrization
-                self.reparmed_ubs.append(nufft_interpolation1d(new_t, np.fft.fft(ub)))
-                self.reparmed_vbs.append(nufft_interpolation1d(new_t, np.fft.fft(vb)))
-                # generate the new embedded boundary
-                new_ebdy = ebdy.regenerate(bx, by)
-                new_ebdys.append(new_ebdy)
-            else: # this is the BDF way
-                # interpolate the velocity
-                ub = ubs.bdy_value_list[ind]
-                vb = vbs.bdy_value_list[ind]
-                ubo_new_parm = self.ubos[ind]
-                vbo_new_parm = self.vbos[ind]
-                # move the boundary with Forward Euler
-                bx = ebdy.bdy.x + 0.5*dt*(3*ub - ubo_new_parm)
-                by = ebdy.bdy.y + 0.5*dt*(3*vb - vbo_new_parm)
-                # repararmetrize the boundary
-                bx, by, new_t = arc_length_parameterize(bx, by, filter_fraction=self.filter_fraction, return_t=True)
-                # move these boundary values for velocity to the new parametrization
-                self.reparmed_ubs.append(nufft_interpolation1d(new_t, np.fft.fft(ub)))
-                self.reparmed_vbs.append(nufft_interpolation1d(new_t, np.fft.fft(vb)))
-                # generate the new embedded boundary
-                new_ebdy = ebdy.regenerate(bx, by)
-                new_ebdys.append(new_ebdy)
+            # generate the new embedded boundary
+            bx, by, new_t = arc_length_parameterize(bxs[ind], bys[ind], filter_fraction=self.filter_fraction, return_t=True)
+            new_ebdy = ebdy.regenerate(bx, by)
+            new_ebdys.append(new_ebdy)
+
+
+            # # interpolate the velocity
+            # ub = ubs.bdy_value_list[ind]
+            # vb = vbs.bdy_value_list[ind]
+            # ubo_new_parm = self.ubos[ind]
+            # vbo_new_parm = self.vbos[ind]
+            # # move the boundary with Forward Euler
+            # bx = ebdy.bdy.x + 0.5*dt*(3*ub - ubo_new_parm)
+            # by = ebdy.bdy.y + 0.5*dt*(3*vb - vbo_new_parm)
+            # # repararmetrize the boundary
+            # bx, by, new_t = arc_length_parameterize(bx, by, filter_fraction=self.filter_fraction, return_t=True)
+            # # move these boundary values for velocity to the new parametrization
+            # self.reparmed_ubs.append(nufft_interpolation1d(new_t, np.fft.fft(ub)))
+            # self.reparmed_vbs.append(nufft_interpolation1d(new_t, np.fft.fft(vb)))
+            # # generate the new embedded boundary
+            # new_ebdy = ebdy.regenerate(bx, by)
+            # new_ebdys.append(new_ebdy)
 
         new_ebdyc = EmbeddedBoundaryCollection(new_ebdys)
         # get dnager zone distance
@@ -174,9 +158,9 @@ class SecondOrder_Advector(object):
         print('Number of points in category 3 is:', fc3n)
         if fc3n > 0:
             for ind, (ebdy, ebdy_old) in enumerate(zip(ebdyc, ebdyc_old)):
-                ub = ubs.bdy_value_list[ind]
-                vb = vbs.bdy_value_list[ind]
-                
+                ub = ubs[ind]
+                vb = vbs[ind]
+
                 c3l = AEP.zone3l[ind]
                 oc3l = OAEP.zone3l[ind]
                 fc3l = np.unique(np.concatenate([c3l, oc3l]))
@@ -330,7 +314,7 @@ class SecondOrder_Advector(object):
         self.xD_all = xD_all
         self.yD_all = yD_all
 
-        return self.new_ebdyc
+        return self.new_ebdyc, new_t
 
     def __call__(self, f, fo):
         new_ebdyc = self.new_ebdyc

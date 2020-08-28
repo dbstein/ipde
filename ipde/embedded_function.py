@@ -112,16 +112,17 @@ class EmbeddedFunction(np.ndarray):
         if 'vmin' not in kwargs:
             kwargs['vmin'] = vmin
             kwargs['vmax'] = vmax
-        clf = ax.pcolor(xv-0.5*xh, yv-0.5*yh, gv, **kwargs)
+        clf = ax.pcolormesh(xv-0.5*xh, yv-0.5*yh, gv, **kwargs)
         for ebdy, fr in zip(ebdyc, self):
             x = ebdy.plot_radial_x
             y = ebdy.plot_radial_y
-            ax.pcolor(x, y, fr, **kwargs)
+            ax.pcolormesh(x, y, fr, **kwargs)
         return clf
-    def get_grid_value(self):
+    def get_grid_value(self, masked=False):
         ebdyc = self._ebdyc_test()
         arr = np.zeros(ebdyc.grid.shape, dtype=self.dtype)
         arr[ebdyc.phys] = self.get_gdata()
+        if masked: arr = np.ma.array(arr, mask=ebdyc.ext)
         return arr
     def get_smoothed_grid_value(self):
         ebdyc = self._ebdyc_test()

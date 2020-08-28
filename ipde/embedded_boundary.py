@@ -63,6 +63,9 @@ class EmbeddedBoundary(object):
             qfs_fsuf:
                 forced oversampling in qfs (useful for kernels with rapid decay)
                 DEFAULT VALUE: None
+            qfs_FF:
+                fudge factor for qfs
+                DEFAULT VALUE: 0
             coordinate_scheme:
                 interpolation scheme used for coordinate solving
 
@@ -75,6 +78,7 @@ class EmbeddedBoundary(object):
         self.coordinate_tolerance = setit('coordinate_tolerance', kwargs, 1e-10)
         self.qfs_tolerance        = setit('qfs_tolerance',        kwargs, 1e-10)
         self.qfs_fsuf             = setit('qfs_fsuf',             kwargs, None )
+        self.qfs_FF               = setit('qfs_FF',               kwargs, 0.0 )
         self.coordinate_scheme    = setit('coordinate_scheme',    kwargs, 'nufft')
         # do this one differently to avoid constructing SlepianMollifier if not needed
         self.heaviside = kwargs['heaviside'] if 'heaviside' in kwargs else SlepianMollifier(2*self.M).step
@@ -443,8 +447,9 @@ class EmbeddedBoundary(object):
     def _generate_qfs_boundaries(self):
         eps  = self.qfs_tolerance
         fsuf = self.qfs_fsuf
-        self.bdy_qfs = QFS_Boundary(self.bdy, eps=eps, forced_source_upsampling_factor=2, FF=0.3)
-        self.interface_qfs = QFS_Boundary(self.interface, eps=eps, forced_source_upsampling_factor=2, FF=0.3)
+        FF = self.qfs_FF
+        self.bdy_qfs = QFS_Boundary(self.bdy, eps=eps, forced_source_upsampling_factor=fsuf, FF=FF)
+        self.interface_qfs = QFS_Boundary(self.interface, eps=eps, forced_source_upsampling_factor=fsuf, FF=FF)
         # collect interface relevant sources
         q = self.interface_qfs
         # these are sources for evaluating from interface out of the annulus

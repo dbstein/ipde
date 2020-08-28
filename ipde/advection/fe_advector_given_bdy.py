@@ -17,7 +17,7 @@ class FE_Advector(object):
         self.ux, self.uy = self.ebdyc.gradient(u)
         self.vx, self.vy = self.ebdyc.gradient(v)
         self.filter_fraction = filter_fraction
-    def generate(self, dt, fixed_grid=False):
+    def generate(self, bxs, bys, dt, fixed_grid=False):
         """
         If fixed_grid = True, reuse same grid
         Otherwise, generate new grid
@@ -25,36 +25,16 @@ class FE_Advector(object):
         ebdyc = self.ebdyc
         u, v = self.u, self.v
         ux, uy, vx, vy = self.ux, self.uy, self.vx, self.vy
+
         # interpolate the velocity
         ubs = ebdyc.interpolate_radial_to_boundary(u)
         vbs = ebdyc.interpolate_radial_to_boundary(v)
 
         # move all boundarys; generate new embedded boundaries
         new_ebdys = []
-        self.reparmed_ubs = []
-        self.reparmed_vbs = []
         for ind, ebdy in enumerate(ebdyc):
-            # interpolate the velocity
-            ub = ubs[ind]
-            vb = vbs[ind]
-            # move the boundary with Forward Euler
-            bx = ebdy.bdy.x + dt*ub
-            by = ebdy.bdy.y + dt*vb
-            # repararmetrize the boundary
-            bx, by, new_t = arc_length_parameterize(bx, by, filter_fraction=self.filter_fraction, return_t=True)
-            # bx, by, new_t = bx, by, np.linspace(0, 2*np.pi, bx.size, endpoint=False)
-            # bx, by, new_t = arc_length_parameterize(bx, by, return_t=True, filter_function=self.filter_function)
-            # move these boundary values to the new parametrization
-            # This is not necessary for this timestepper, but is used by other
-            # timesteppers which use this as a startup!
-            # SHOULD I SWITCH THIS TO NUFFT WHEN THAT IS BEING USED?
-            self.reparmed_ubs.append(nufft_interpolation1d(new_t, np.fft.fft(ub)))
-            self.reparmed_vbs.append(nufft_interpolation1d(new_t, np.fft.fft(vb)))
-            # bu_interp = interp1d(0, 2*np.pi, ebdy.bdy.dt, ub, p=True)
-            # bv_interp = interp1d(0, 2*np.pi, ebdy.bdy.dt, vb, p=True)
-            # self.reparmed_ubs.append(bu_interp(new_t))
-            # self.reparmed_vbs.append(bv_interp(new_t))
             # generate the new embedded boundary
+            bx, by, new_t = arc_length_parameterize(bxs[ind], bys[ind], filter_fraction=self.filter_fraction, return_t=True)
             new_ebdy = ebdy.regenerate(bx, by)
             new_ebdys.append(new_ebdy)
         new_ebdyc = EmbeddedBoundaryCollection(new_ebdys)
@@ -174,7 +154,7 @@ class FE_Advector(object):
         self.xd_all = xd_all
         self.yd_all = yd_all
 
-        return self.new_ebdyc
+        return self.new_ebdyc, new_t
 
     def __call__(self, f):
         new_ebdyc = self.new_ebdyc

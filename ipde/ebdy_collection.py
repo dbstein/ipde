@@ -5,7 +5,7 @@ import finufftpy
 PointSet = pybie2d.point_set.PointSet
 from near_finder.phys_routines import points_inside_curve_update
 from near_finder.coordinate_routines import compute_local_coordinates
-from ipde.embedded_boundary import EmbeddedBoundary
+from ipde.embedded_boundary import EmbeddedBoundary, LoadEmbeddedBoundary
 from ipde.utilities import affine_transformation
 from ipde.annular.annular import ApproximateAnnularGeometry
 from ipde.derivatives import fd_x_4, fd_y_4, fourier
@@ -208,6 +208,16 @@ class EmbeddedPointPartition(object):
     def get_Ns(self):
         return self.zone1_N, self.zone2_N, self.zone3_N
 
+def LoadEmbeddedBoundaryCollection(d):
+    ebdy_list = [LoadEmbeddedBoundary(ebdy_dict) for ebdy_dict in d['ebdy_list']]
+    ebdyc = EmbeddedBoundaryCollection(ebdy_list)
+    if d['grid'] is not None:
+        ebdyc.register_grid(Grid(**d['grid']))
+    if d['bumpy'] is not None:
+        ebdyc.bumpy = d['bumpy']
+        ebdyc.bumpy_readied = True
+    return ebdyc
+
 class EmbeddedBoundaryCollection(object):
     def __init__(self, ebdy_list):
         """
@@ -233,6 +243,27 @@ class EmbeddedBoundaryCollection(object):
     def __getitem__(self, ind):
         return self.ebdys[ind]
 
+    def save(self):
+        ebdy_list = [ebdy.save() for ebdy in self.ebdys]
+        if hasattr(self, 'grid'):
+            grid = {
+                'x_bounds'    : self.grid.x_bounds,
+                'y_bounds'    : self.grid.y_bounds,
+                'Nx'          : self.grid.Nx,
+                'Ny'          : self.grid.Ny,
+                'mask'        : self.grid.mask,
+                'x_endpoints' : self.grid.x_endpoints,
+                'y_endpoints' : self.grid.y_endpoints,
+            }
+        else:
+            grid = None
+        bumpy = self.bumpy if hasattr(self, 'bumpy') else None
+        d = {
+            'ebdy_list' : ebdy_list,
+            'grid'      : grid,
+            'bumpy'     : bumpy,
+        }
+        return d
     def generate_grid(self, h=None, danger_zone_distance=None):
         """
         Auto generate an underlying grid

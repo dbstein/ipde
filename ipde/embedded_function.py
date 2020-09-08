@@ -2,6 +2,16 @@ import numpy as np
 import pybie2d
 import weakref
 
+def LoadEmbeddedFunction(d, ebdyc=None):
+    from ipde.ebdy_collection import LoadEmbeddedBoundaryCollection
+    if ebdyc is None:
+        if 'ebdyc_dict' not in d:
+            raise Exception('Need ebdyc provided unless save was generated with full_save method.')
+        ebdyc = LoadEmbeddedBoundaryCollection(d['ebdyc_dict'])
+    ef = EmbeddedFunction(ebdyc)
+    ef.load_linear_data(d['linear_data'])
+    return ef, ebdyc
+
 class EmbeddedFunction(np.ndarray):
     """
     Updated version of the EmbeddedFunction Class
@@ -28,6 +38,14 @@ class EmbeddedFunction(np.ndarray):
             return ebdyc
         else:
             raise Exception('Underlying ebdyc has been deleted.')
+    def save(self):
+        return {'linear_data': self.view(np.ndarray)}
+    def full_save(self):
+        d = {
+            'ebdyc_dict'  : self.ebdyc().save(),
+            'linear_data' : self.view(np.ndarray),
+        }
+        return d
     def _generate(self):
         ebdyc = self._ebdyc_test()
         self.n_grid = ebdyc.grid_phys.N

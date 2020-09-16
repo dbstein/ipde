@@ -212,7 +212,7 @@ def LoadEmbeddedBoundaryCollection(d):
     ebdy_list = [LoadEmbeddedBoundary(ebdy_dict) for ebdy_dict in d['ebdy_list']]
     ebdyc = EmbeddedBoundaryCollection(ebdy_list)
     if d['grid'] is not None:
-        ebdyc.register_grid(Grid(**d['grid']))
+        ebdyc.register_grid(Grid(**d['grid']), danger_zone_distance=d['ddd'])
     if d['bumpy'] is not None:
         ebdyc.bumpy = d['bumpy']
         ebdyc.bumpy_readied = True
@@ -255,13 +255,16 @@ class EmbeddedBoundaryCollection(object):
                 'x_endpoints' : self.grid.x_endpoints,
                 'y_endpoints' : self.grid.y_endpoints,
             }
+            ddd = self.danger_zone_distance
         else:
             grid = None
+            ddd = None
         bumpy = self.bumpy if hasattr(self, 'bumpy') else None
         d = {
             'ebdy_list' : ebdy_list,
             'grid'      : grid,
             'bumpy'     : bumpy,
+            'ddd'       : ddd,
         }
         return d
     def generate_grid(self, h=None, danger_zone_distance=None):
@@ -317,6 +320,7 @@ class EmbeddedBoundaryCollection(object):
             bool, whether to pass verbose output onto gridpoints_near_curve
         """
         self.grid = grid
+        self.danger_zone_distance = danger_zone_distance
 
         # generate memory for phys/close arrays
         close        = np.zeros(grid.shape, dtype=bool)

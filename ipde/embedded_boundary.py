@@ -4,7 +4,8 @@ import fast_interp
 import finufftpy
 GSB = pybie2d.boundaries.global_smooth_boundary.global_smooth_boundary.Global_Smooth_Boundary
 PointSet = pybie2d.point_set.PointSet
-from near_finder.points_near_curve import gridpoints_near_curve_update
+from near_finder.points_near_curve import gridpoints_near_curve_update, gridpoints_near_curve
+from near_finder.phys_routines import points_inside_curve
 from ipde.heavisides import SlepianMollifier
 from ipde.utilities import affine_transformation, get_chebyshev_nodes, SimpleFourierFilter
 from qfs.two_d_qfs import QFS_Boundary
@@ -146,6 +147,13 @@ class EmbeddedBoundary(object):
             'kwargs'   : short_kwargs,
         }
         return d
+
+    def search_for_physical_points(self, grid):
+        """
+        This routine is kinda crappy.  Should update to use the sparse routines...
+        """
+        res = gridpoints_near_curve(self.bdy.x, self.bdy.y, grid.xv, grid.yv, self.radial_width)
+        return points_inside_curve(grid.xg, grid.yg, res, inside=self.interior)
 
     def register_grid(self, grid, close, int_helper1, int_helper2, float_helper, bool_helper, index, danger_zone_distance=None, verbose=False):
         """

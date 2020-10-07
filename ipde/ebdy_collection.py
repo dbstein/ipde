@@ -3,6 +3,7 @@ import pybie2d
 import fast_interp
 import finufftpy
 PointSet = pybie2d.point_set.PointSet
+from near_finder.points_near_curve import points_near_curve_coarse
 from near_finder.phys_routines import points_inside_curve_update
 from near_finder.coordinate_routines import compute_local_coordinates
 from ipde.embedded_boundary import EmbeddedBoundary, LoadEmbeddedBoundary
@@ -104,8 +105,9 @@ class EmbeddedPointPartition(object):
                 dz = self.dzl[ind]
                 gi = self.gil[ind]
             else:
-                dz = None
-                gi = None
+                dz, gi = points_near_curve_coarse(bx, by, self.x, self.y, width)
+                gi = gi[dz]
+                dz = np.where(dz)[0]
             # find coordinates for danger points
             check_x = self.x[dz]
             check_y = self.y[dz]
@@ -310,6 +312,16 @@ class EmbeddedBoundaryCollection(object):
             self.bumpy_readied = False
         # return the grid
         return grid
+
+    def search_for_physical_points(self, grid):
+        """
+        Finds physical points for some *other* grid, not the registered one
+        """
+        physical = np.ones(grid.shape, dtype=bool)
+        for ei, ebdy in enumerate(self):
+            ph = ebdy.search_for_physical_points(grid)
+            physical = np.logical_and(physical, ph)
+        return physical
 
     def register_grid(self, grid, danger_zone_distance=None, verbose=False):
         """

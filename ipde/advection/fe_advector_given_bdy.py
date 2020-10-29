@@ -4,6 +4,7 @@ from personal_utilities.nufft_interpolation import nufft_interpolation1d
 from ipde.embedded_boundary import EmbeddedBoundary
 from ipde.ebdy_collection import EmbeddedBoundaryCollection, BoundaryFunction
 from ipde.embedded_function import EmbeddedFunction
+from fast_interp import interp1d
 
 class FE_Advector(object):
     """

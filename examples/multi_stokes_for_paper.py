@@ -4,6 +4,7 @@ import matplotlib.pyplot as plt
 import pybie2d
 from ipde.embedded_boundary import EmbeddedBoundary
 from ipde.ebdy_collection import EmbeddedBoundaryCollection
+from ipde.embedded_function import EmbeddedFunction
 from ipde.heavisides import SlepianMollifier
 from ipde.derivatives import fd_x_4, fd_y_4, fourier
 from ipde.solvers.multi_boundary.stokes import StokesSolver
@@ -20,7 +21,7 @@ Stokes_Layer_Apply = pybie2d.kernels.high_level.stokes.Stokes_Layer_Apply
 nb = 100
 M = 4
 
-adj = 10
+adj = 2
 
 nb *= adj
 M *= adj
@@ -54,7 +55,7 @@ ng = 2*int(0.5*5.2//bh)
 grid = Grid([-2.6, 2.6], ng, [-2.6, 2.6], ng, x_endpoints=[True, False], y_endpoints=[True, False])
 # construct embedded boundary
 bdys = [bdy1, bdy2, bdy3]
-ebdys = [EmbeddedBoundary(bdy, bdy is bdy1, M, bh, pad_zone, MOL.step) for bdy in bdys]
+ebdys = [EmbeddedBoundary(bdy, bdy is bdy1, M, bh, pad_zone=pad_zone, heaviside=MOL.step) for bdy in bdys]
 ebdyc = EmbeddedBoundaryCollection(ebdys)
 # register the grid
 print('\nRegistering the grid')
@@ -94,9 +95,16 @@ pa_rs = [pa_r - np.mean(pa_r) for pa_r in pa_rs]
 upper_u = np.concatenate([u_function(ebdy.bdy.x, ebdy.bdy.y) for ebdy in ebdys])
 upper_v = np.concatenate([v_function(ebdy.bdy.x, ebdy.bdy.y) for ebdy in ebdys])
 
+_fu = EmbeddedFunction(ebdyc)
+_fu.load_data(fu, fu_rs)
+fu = _fu
+_fv = EmbeddedFunction(ebdyc)
+_fv.load_data(fv, fv_rs)
+fv = _fv
+
 # setup the solver
 solver = StokesSolver(ebdyc, solver_type=solver_type)
-uc, vc, pc, urs, vrs = solver(fu, fv, fu_rs, fv_rs, tol=1e-12, verbose=verbose)
+uc, vc, pc = solver(fu, fv, tol=1e-12, verbose=verbose)
 ur = urs[0]
 vr = vrs[0]
 

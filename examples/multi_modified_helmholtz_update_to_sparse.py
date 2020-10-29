@@ -24,9 +24,9 @@ M = 10
 pad_zone = 0
 verbose = True
 plot = True
-reparametrize = True
+reparametrize = False
 slepian_r = 1.5*M
-solver_type = 'fourth' # fourth or spectral
+solver_type = 'spectral' # fourth or spectral
 
 # get heaviside function
 MOL = SlepianMollifier(slepian_r)
@@ -146,7 +146,18 @@ sigmal = [qfs([tau]) for qfs, tau in zip(qfs_list, taul)]
 sigmav = np.concatenate(sigmal)
 
 # evaluate this onto all gridpoints and radial points
+st = time.time()
 out = MH_Layer_Apply(ebdyc.bdy_inward_sources, ebdyc.grid_and_radial_pts, charge=sigmav, k=helmholtz_k)
+print(time.time() - st)
+
+st = time.time()
+out = MH_Layer_Apply(ebdyc.bdy_inward_sources, ebdyc.grid_and_radial_pts, charge=sigmav, k=helmholtz_k, backend='KIFMM', Ncutoff=20, Nequiv=30)
+print(time.time() - st)
+
+st = time.time()
+out = MH_Layer_Apply(ebdyc.bdy_inward_sources, ebdyc.grid_and_radial_pts, charge=sigmav, k=helmholtz_k, backend='KIFMM', Ncutoff=20, Nequiv=30)
+print(time.time() - st)
+
 gslp, rslpl = ebdyc.divide_grid_and_radial(out)
 
 ue[ebdyc.phys] += gslp

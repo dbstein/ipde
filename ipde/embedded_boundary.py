@@ -1,6 +1,5 @@
 import numpy as np
 import pybie2d
-import fast_interp
 import finufftpy
 GSB = pybie2d.boundaries.global_smooth_boundary.global_smooth_boundary.Global_Smooth_Boundary
 PointSet = pybie2d.point_set.PointSet

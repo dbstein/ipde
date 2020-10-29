@@ -36,14 +36,14 @@ errs_u = [1.09e-02, 4.77e-05, 6.65e-07, 7.98e-09, 9.75e-11, 1.27e-12, 2.13e-12, 
 errs_u = [1.09e-02, 4.77e-05, 6.65e-07, 7.99e-09, 9.74e-11, 1.91e-12, 4.02e-11, 1.86e-11, 2.58e-12, 1.29e-10 ]
 errs_p = [3.17e-01, 3.15e-03, 6.55e-05, 1.26e-06, 1.83e-08, 3.25e-10, 3.45e-09, 3.62e-09, 5.55e-10, 1.58e-08 ]
 
-nb = 600
+nb = 400
 ng = int(nb/2)
 M = 4*int(nb/100)
 M = max(4, M)
 M = min(30, M)
 pad_zone = 0
 verbose = True
-plot = False
+plot = True
 reparametrize = False
 slepian_r = 1.5*M
 solver_type = 'spectral' # fourth or spectral
@@ -55,7 +55,7 @@ MOL = SlepianMollifier(slepian_r)
 # construct boundary
 bdy = GSB(c=star(nb, a=0.1, f=5))
 if reparametrize:
-	bdy = GSB(*arc_length_parameterize(bdy.x, bdy.y))
+    bdy = GSB(*arc_length_parameterize(bdy.x, bdy.y))
 bh = bdy.dt*bdy.speed.min()
 # construct a grid
 grid = Grid([-np.pi/2, np.pi/2], ng, [-np.pi/2, np.pi/2], ng, x_endpoints=[True, False], y_endpoints=[True, False])
@@ -154,8 +154,8 @@ def Pressure_SLP(src, trg):
 def Fixed_SLP(src, trg):
     return Naive_SLP(src, trg) + Stokes_Pressure_Fix(src, trg)
 A = Stokes_Layer_Singular_Form(bdy, ifdipole=True) - 0.5*np.eye(2*bdy.N) + Stokes_Pressure_Fix(bdy, bdy)
-bu = solver.get_boundary_values(u.radial_value_list)
-bv = solver.get_boundary_values(v.radial_value_list)
+bu = solver.get_boundary_values(u)
+bv = solver.get_boundary_values(v)
 buc = np.concatenate([bu, bv])
 bc = np.concatenate([bcu, bcv])
 tau = np.linalg.solve(A, bc-buc)
@@ -170,15 +170,9 @@ else:
     sigma = qfs([tau,])
     nsigma2 = int(sigma.size/2)
     out = Layer_Apply(ebdy.bdy_qfs.interior_source_bdy, ebdyc.grid_and_radial_pts, sigma.reshape(2, nsigma2))
-ugslp, urslpl = ebdyc.divide_grid_and_radial(out[0])
-vgslp, vrslpl = ebdyc.divide_grid_and_radial(out[1])
-pgslp, prslpl = ebdyc.divide_grid_and_radial(out[2])
-u[0] += urslpl[0]
-v[0] += vrslpl[0]
-p[0] += prslpl[0]
-u.grid_value[ebdyc.phys] += ugslp
-v.grid_value[ebdyc.phys] += vgslp
-p.grid_value[ebdyc.phys] += pgslp
+u += out[0]
+v += out[1]
+p += out[2]
 
 # normalize p/pa
 pd = ebdyc[0].interpolate_radial_to_boundary(p[0])
@@ -197,20 +191,20 @@ print('Error, U:    {:0.2e}'.format(max(u_err.max(), v_err.max())))
 print('Error, p:    {:0.2e}'.format(p_err.max()))
 
 if plot:
-	fig, ax = plt.subplots()
-	clf = (u_err+1e-15).plot(ax, norm=mpl.colors.LogNorm())
-	ax.plot(ebdy.bdy.x, ebdy.bdy.y, color='black', linewidth=3)
-	ax.plot(ebdy.interface.x, ebdy.interface.y, color='white', linewidth=3)
-	plt.colorbar(clf)
+    fig, ax = plt.subplots()
+    clf = (u_err+1e-15).plot(ax, norm=mpl.colors.LogNorm())
+    ax.plot(ebdy.bdy.x, ebdy.bdy.y, color='black', linewidth=3)
+    ax.plot(ebdy.interface.x, ebdy.interface.y, color='white', linewidth=3)
+    plt.colorbar(clf)
 
-	fig, ax = plt.subplots()
-	clf = (v_err+1e-15).plot(ax, norm=mpl.colors.LogNorm())
-	ax.plot(ebdy.bdy.x, ebdy.bdy.y, color='black', linewidth=3)
-	ax.plot(ebdy.interface.x, ebdy.interface.y, color='white', linewidth=3)
-	plt.colorbar(clf)
+    fig, ax = plt.subplots()
+    clf = (v_err+1e-15).plot(ax, norm=mpl.colors.LogNorm())
+    ax.plot(ebdy.bdy.x, ebdy.bdy.y, color='black', linewidth=3)
+    ax.plot(ebdy.interface.x, ebdy.interface.y, color='white', linewidth=3)
+    plt.colorbar(clf)
 
-fig, ax = plt.subplots()
-clf = (p_err+1e-15).plot(ax, norm=mpl.colors.LogNorm())
-ax.plot(ebdy.bdy.x, ebdy.bdy.y, color='black', linewidth=3)
-ax.plot(ebdy.interface.x, ebdy.interface.y, color='white', linewidth=3)
-plt.colorbar(clf)
+    fig, ax = plt.subplots()
+    clf = (p_err+1e-15).plot(ax, norm=mpl.colors.LogNorm())
+    ax.plot(ebdy.bdy.x, ebdy.bdy.y, color='black', linewidth=3)
+    ax.plot(ebdy.interface.x, ebdy.interface.y, color='white', linewidth=3)
+    plt.colorbar(clf)

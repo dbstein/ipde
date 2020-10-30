@@ -171,7 +171,7 @@ class SecondOrder_Advector(object):
 
         # categroy 3... this is the tricky one
         fc3n = aap.N - fc12n
-        print('Number of points in category 3 is:', fc3n)
+        # print('Number of points in category 3 is:', fc3n)
         if fc3n > 0:
             for ind, (ebdy, ebdy_old) in enumerate(zip(ebdyc, ebdyc_old)):
                 ub = ubs.bdy_value_list[ind]

@@ -14,6 +14,7 @@ class VectorSolver(object):
         self.helpers = []
         for ebdy, AS in zip(self.ebdyc.ebdys, AS_list):
             self.helpers.append(self._get_helper(ebdy, AS))
+        self.AS_list = [helper.annular_solver for helper in self.helpers]
         # compute necessary spectral operators
         self.grid = self.ebdyc.grid
         self.kx, self.ky = self.ebdyc.kx, self.ebdyc.ky

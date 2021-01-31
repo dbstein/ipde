@@ -18,6 +18,7 @@ class VectorHelper(object):
             self._define_annular_solver()
         else:
             self.annular_solver = annular_solver
+            self.AAG = self.annular_solver.AAG
         self._set_boundary_estimators()
         self._get_RAG()
         self._get_qfs()

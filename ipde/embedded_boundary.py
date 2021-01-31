@@ -37,6 +37,11 @@ def LoadEmbeddedBoundary(d):
     bdy = GSB(x=d['bx'], y=d['by'])
     return EmbeddedBoundary(bdy, d['interior'], d['M'], d['h'], **d['kwargs'])
 
+def smoothit(f, factor):
+    fh = np.fft.rfft(f)
+    fh[int(fh.size*factor):] = 0.0
+    return np.fft.irfft(fh)
+
 class EmbeddedBoundary(object):
     def __init__(self, bdy, interior, M, h, **kwargs):
         """
@@ -79,6 +84,9 @@ class EmbeddedBoundary(object):
                 DEFAULT VALUE: 0
             coordinate_scheme:
                 interpolation scheme used for coordinate solving
+            smoothing_factor: chop off part of the boundary spectra on input
+                (takes proportion to be smoothed out)
+                DEFAULT VALUE: None
 
         """
         self.bdy = bdy
@@ -91,6 +99,7 @@ class EmbeddedBoundary(object):
         self.qfs_fsuf             = setit('qfs_fsuf',             kwargs, None )
         self.qfs_FF               = setit('qfs_FF',               kwargs, 0.0 )
         self.coordinate_scheme    = setit('coordinate_scheme',    kwargs, 'nufft')
+        self.smoothing_factor     = setit('smoothing_factor',     kwargs, None)
 
         # if grid_to_radial_step and radial_cutoff are provided, we don't need a heaviside...
         if 'grid_to_radial_step' in kwargs and 'radial_cutoff' in kwargs:
@@ -105,6 +114,12 @@ class EmbeddedBoundary(object):
         # parameters that depend on other parameters
         self.radial_width = self.M*self.h
         self.heaviside_width = self.radial_width - self.pad_zone*self.h
+
+        # smooth the boundary, if requested
+        if self.smoothing_factor is not None:
+            smooth_x = smoothit(self.bdy.x, self.smoothing_factor)
+            smooth_y = smoothit(self.bdy.y, self.smoothing_factor)
+            self.bdy = GSB(smooth_x, smooth_y)
 
         # construct radial grid
         self._generate_radial_grid()

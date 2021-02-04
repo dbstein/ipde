@@ -39,7 +39,12 @@ def LoadEmbeddedBoundary(d):
 
 def smoothit(f, factor):
     fh = np.fft.rfft(f)
-    fh[int(fh.size*factor):] = 0.0
+    n = f.size
+    k = np.fft.rfftfreq(n, 1/n)
+    max_k = np.abs(k).max()
+    filt = np.exp(-100*(np.abs(k)/max_k)**16)
+    fh *= filt
+    # fh[int(fh.size*factor):] = 0.0
     return np.fft.irfft(fh)
 
 class EmbeddedBoundary(object):
@@ -139,10 +144,13 @@ class EmbeddedBoundary(object):
         """
         # importantly, we need to delete grid_to_radial_step and radial_cutoff
         # from self.kwargs so they are remade
-        _ = self.kwargs.pop('grid_to_radial_step')
-        _ = self.kwargs.pop('radial_cutoff')
+        new_kwargs = self.kwargs.copy()
+        if 'grid_to_radial_step' in new_kwargs:
+            new_kwargs.pop('grid_to_radial_step')
+        if 'radial_cutoff' in new_kwargs:
+            _ = new_kwargs.pop('radial_cutoff')
         bdy = GSB(x=bx.copy(), y=by.copy())
-        return EmbeddedBoundary(bdy, self.interior, self.M, self.h, **self.kwargs)
+        return EmbeddedBoundary(bdy, self.interior, self.M, self.h, **new_kwargs)
 
     def save(self):
         """

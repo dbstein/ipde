@@ -43,8 +43,9 @@ class SecondOrder_Advector(object):
         new_ebdys = []
         for ind, ebdy in enumerate(self.ebdyc):
             # generate the new embedded boundary
-            bx, by, new_t = arc_length_parameterize(bxs[ind], bys[ind], filter_fraction=self.filter_fraction, return_t=True)
-            new_ebdy = ebdy.regenerate(bx, by)
+            # bx, by, new_t = arc_length_parameterize(bxs[ind], bys[ind], filter_fraction=self.filter_fraction, return_t=True)
+            # new_ebdy = ebdy.regenerate(bx, by)
+            new_ebdy = ebdy.regenerate(bxs[ind], bys[ind])
             new_ebdys.append(new_ebdy)
 
 
@@ -314,7 +315,7 @@ class SecondOrder_Advector(object):
         self.xD_all = xD_all
         self.yD_all = yD_all
 
-        return self.new_ebdyc, new_t
+        return self.new_ebdyc#, new_t
 
     def __call__(self, f, fo):
         new_ebdyc = self.new_ebdyc
@@ -322,8 +323,13 @@ class SecondOrder_Advector(object):
         f_new = EmbeddedFunction(new_ebdyc)
         f_new.zero()
         # semi-lagrangian interpolation
-        fh1 = self.ebdyc.interpolate_to_points(f, self.xd_all, self.yd_all, fix_r=True, dzl=new_ebdyc.danger_zone_list, gil=new_ebdyc.guess_ind_list)
-        fh2 = self.ebdyc_old.interpolate_to_points(fo, self.xD_all, self.yD_all, fix_r=True, dzl=new_ebdyc.danger_zone_list, gil=new_ebdyc.guess_ind_list)
+        # fh1 = self.ebdyc.interpolate_to_points(f, self.xd_all, self.yd_all, fix_r=True, dzl=new_ebdyc.danger_zone_list, gil=new_ebdyc.guess_ind_list)
+        # fh2 = self.ebdyc_old.interpolate_to_points(fo, self.xD_all, self.yD_all, fix_r=True, dzl=new_ebdyc.danger_zone_list, gil=new_ebdyc.guess_ind_list)
+
+        # something seems to be going wrong with the danger zone lists?
+        fh1 = self.ebdyc.interpolate_to_points(f, self.xd_all, self.yd_all, fix_r=True)#, dzl=new_ebdyc.danger_zone_list, gil=new_ebdyc.guess_ind_list)
+        fh2 = self.ebdyc_old.interpolate_to_points(fo, self.xD_all, self.yD_all, fix_r=True)#, dzl=new_ebdyc.danger_zone_list, gil=new_ebdyc.guess_ind_list)
+
         fh = fh1 + fh2
         # set the grid values
         # f_new.grid_value[new_ebdyc.phys_not_in_annulus] = fh[:new_ebdyc.grid_pna_num]

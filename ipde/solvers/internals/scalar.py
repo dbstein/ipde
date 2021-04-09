@@ -1,12 +1,6 @@
 import numpy as np
 from ...annular.annular import ApproximateAnnularGeometry, RealAnnularGeometry
 
-import pybie2d
-Laplace_Layer_Singular_Form = pybie2d.kernels.high_level.laplace.Laplace_Layer_Singular_Form
-Laplace_Layer_Apply = pybie2d.kernels.high_level.laplace.Laplace_Layer_Apply
-import scipy as sp
-import scipy.linalg
-
 class ScalarHelper(object):
     """
     General class for scalar solvers
@@ -76,6 +70,9 @@ class ScalarHelper(object):
         """
         return self._in_estimator.dot(ur)
     def __call__(self, fr, bv, bx, by, **kwargs):
+        """
+        kwargs are to be passed onto the annular solver
+        """
         ebdy = self.ebdy
         ucn = bx*ebdy.interface.normal_x + by*ebdy.interface.normal_y
         # compute the radial solution
@@ -104,7 +101,8 @@ class ScalarHelper(object):
         # of our own sigma_r, onto the radial points
 
         # First, we get the u on our interface associate with our sigma_g
-        w = self.Layer_Apply(self.ebdy.interface_grid_source, self.ebdy.interface, self.sigma_g)
+        src = self.interface_qfs_g.source
+        w = self.Layer_Apply(src, self.ebdy.interface, self.sigma_g)
         # now subtract this from the given ub
         ub = ub - w
 
@@ -115,7 +113,8 @@ class ScalarHelper(object):
         sigma_r_tot = sigma_r_adj + self.sigma_r
 
         # evaluate this onto radial points and add to ur
-        rslp = self.Layer_Apply(self.ebdy.interface_radial_source, self.ebdy.radial_targ, sigma_r_tot)
+        src = self.interface_qfs_r.source
+        rslp = self.Layer_Apply(src, self.ebdy.radial_targ, sigma_r_tot)
         self.ur += rslp.reshape(self.ur.shape)
 
         return self.ur

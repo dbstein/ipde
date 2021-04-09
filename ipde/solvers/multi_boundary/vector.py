@@ -1,19 +1,17 @@
 import numpy as np
-from ...derivatives import fourier, fd_x_4, fd_y_4
-# from ...ebdy_collection import EmbeddedFunction, BoundaryFunction
-from ...ebdy_collection import BoundaryFunction
-from ...embedded_function import EmbeddedFunction
+from ipde.derivatives import fourier, fd_x_4, fd_y_4
+from ipde.embedded_function import EmbeddedFunction, BoundaryFunction
+from pybie2d.boundaries.collection import BoundaryCollection
 
 class VectorSolver(object):
-    def __init__(self, ebdyc, solver_type='spectral', AS_list=None, **kwargs):
+    def __init__(self, ebdyc, solver_type='spectral', helpers=None, **kwargs):
         self.ebdyc = ebdyc
         self.solver_type = solver_type
-        if AS_list is None: AS_list = [None,]*self.ebdyc.N
-        self.AS_list = AS_list
+        if helpers is None: helpers = [None,]*self.ebdyc.N
         self._extract_extra_kwargs(**kwargs)
         self.helpers = []
-        for ebdy, AS in zip(self.ebdyc.ebdys, AS_list):
-            self.helpers.append(self._get_helper(ebdy, AS))
+        for ebdy, helper in zip(self.ebdyc.ebdys, helpers):
+            self.helpers.append(self._get_helper(ebdy, helper))
         self.AS_list = [helper.annular_solver for helper in self.helpers]
         # compute necessary spectral operators
         self.grid = self.ebdyc.grid
@@ -29,6 +27,14 @@ class VectorSolver(object):
         self.grid_step = self.ebdyc.grid_step
         # define the Layer_Apply function
         self._define_layer_apply()
+        # collect grid sources
+        self._collect_grid_sources()
+    def _collect_grid_sources(self):
+        self.grid_sources = BoundaryCollection()
+        for helper in self.helpers:
+            self.grid_sources.add(helper.interface_qfs_g.source,
+                                            'i' if helper.interior else 'e')
+        self.grid_sources.amass_information()
     def _extract_extra_kwargs(self, **kwargs):
         pass
     def _get_helper(self, ebdy, AS):
@@ -78,7 +84,7 @@ class VectorSolver(object):
             sigmag_list.append(helper(fur, fvr, bu, bv, btxx, btxy, btyy, **kwargs))
         # we now need to evaluate this onto the grid / interface points
         sigmag = np.column_stack(sigmag_list)
-        out = self.Layer_Apply(self.ebdyc.grid_source, self.ebdyc.grid_pnai, sigmag)
+        out = self.Layer_Apply(self.grid_sources, self.ebdyc.grid_pnai, sigmag)
         # need to divide this apart
         gu, bus = self.ebdyc.divide_pnai(out[0])
         gv, bvs = self.ebdyc.divide_pnai(out[1])

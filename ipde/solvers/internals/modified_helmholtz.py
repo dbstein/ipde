@@ -1,11 +1,9 @@
 import numpy as np
 import pybie2d
-from qfs.two_d_qfs import QFS_Evaluator
-from .scalar import ScalarHelper
-from ...annular.modified_helmholtz import AnnularModifiedHelmholtzSolver
-
-MH_Layer_Form = pybie2d.kernels.high_level.modified_helmholtz.Modified_Helmholtz_Layer_Form
-MH_Layer_Apply = pybie2d.kernels.high_level.modified_helmholtz.Modified_Helmholtz_Layer_Apply
+from pybie2d.kernels.high_level.modified_helmholtz import Modified_Helmholtz_Layer_Apply
+from qfs.modified_helmholtz_qfs import Modified_Helmholtz_QFS
+from ipde.solvers.internals.scalar import ScalarHelper
+from ipde.annular.modified_helmholtz import AnnularModifiedHelmholtzSolver
 
 class ModifiedHelmholtzHelper(ScalarHelper):
     """
@@ -18,17 +16,9 @@ class ModifiedHelmholtzHelper(ScalarHelper):
     def _define_annular_solver(self):
         self.annular_solver = AnnularModifiedHelmholtzSolver(self.AAG, k=self.k)
     def _get_qfs(self):
-        # construct qfs evaluators for the interface
-        sign = 1 if self.interior else -1
-        self.Singular_SLP = lambda src, _: src.Modified_Helmholtz_SLP_Self_Form(k=self.k)
-        self.Singular_DLP_G = lambda src, _: src.Modified_Helmholtz_DLP_Self_Form(k=self.k) - sign*0.5*np.eye(src.N)
-        self.Singular_DLP_R = lambda src, _: src.Modified_Helmholtz_DLP_Self_Form(k=self.k) + sign*0.5*np.eye(src.N)
-        self.Naive_SLP = lambda src, trg: MH_Layer_Form(src, trg, k=self.k, ifcharge=True)
-        self.interface_qfs_g = QFS_Evaluator(self.ebdy.interface_qfs,
-                                self.interior, [self.Singular_SLP, self.Singular_DLP_G],
-                                self.Naive_SLP, on_surface=True, form_b2c=False)
-        self.interface_qfs_r = QFS_Evaluator(self.ebdy.interface_qfs,
-                                not self.interior, [self.Singular_SLP, self.Singular_DLP_R],
-                                self.Naive_SLP, on_surface=True, form_b2c=False)
+        self.interface_qfs_g = Modified_Helmholtz_QFS(self.ebdy.interface, 
+                                    self.interior, True, True, self.k)
+        self.interface_qfs_r = Modified_Helmholtz_QFS(self.ebdy.interface, 
+                                    not self.interior, True, True, self.k)
     def _define_layer_apply(self):
-        self.Layer_Apply = lambda src, trg, ch: MH_Layer_Apply(src, trg, charge=ch, k=self.k)
+        self.Layer_Apply = lambda src, trg, ch: Modified_Helmholtz_Layer_Apply(src, trg, charge=ch, k=self.k)

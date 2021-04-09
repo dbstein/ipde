@@ -1,19 +1,17 @@
 import numpy as np
-from ...derivatives import fourier, fd_x_4, fd_y_4
-from ...ebdy_collection import BoundaryFunction
-from ...embedded_function import EmbeddedFunction
+from ipde.derivatives import fourier, fd_x_4, fd_y_4
+from ipde.embedded_function import EmbeddedFunction, BoundaryFunction
+from pybie2d.boundaries.collection import BoundaryCollection
 
 class ScalarSolver(object):
-    def __init__(self, ebdyc, solver_type='spectral', AS_list=None, **kwargs):
+    def __init__(self, ebdyc, solver_type='spectral', helpers=None, **kwargs):
         self.ebdyc = ebdyc
         self.solver_type = solver_type
-        if AS_list is None: AS_list = [None,]*self.ebdyc.N
-        self.AS_list = AS_list
         self._extract_extra_kwargs(**kwargs)
+        if helpers is None: helpers = [None,]*self.ebdyc.N
         self.helpers = []
-        for ebdy, AS in zip(self.ebdyc.ebdys, AS_list):
-            self.helpers.append(self._get_helper(ebdy, AS))
-        self.AS_list = [helper.annular_solver for helper in self.helpers]
+        for ebdy, helper in zip(self.ebdyc, helpers):
+            self.helpers.append(self._get_helper(ebdy, helper))
         # compute necessary spectral operators
         self.grid = self.ebdyc.grid
         self.kx, self.ky = self.ebdyc.kx, self.ebdyc.ky
@@ -28,9 +26,17 @@ class ScalarSolver(object):
         self.grid_step = self.ebdyc.grid_step
         # define the Layer_Apply function
         self._define_layer_apply()
+        # collect grid sources
+        self._collect_grid_sources()
+    def _collect_grid_sources(self):
+        self.grid_sources = BoundaryCollection()
+        for helper in self.helpers:
+            self.grid_sources.add(helper.interface_qfs_g.source,
+                                            'i' if helper.interior else 'e')
+        self.grid_sources.amass_information()
     def _extract_extra_kwargs(self, **kwargs):
         pass
-    def _get_helper(self, ebdy, AS):
+    def _get_helper(self, ebdy, helper):
         raise NotImplementedError
     def _grid_solve(self, fc):
         raise NotImplementedError
@@ -43,35 +49,21 @@ class ScalarSolver(object):
         else:
             self.dx = lambda x: fd_x_4(x, self.ebdyc.grid.xh)
             self.dy = lambda x: fd_y_4(x, self.ebdyc.grid.yh)
-    def get_boundary_values(self, urs):
-        use_ef = type(urs) == EmbeddedFunction
-        # if use_ef:
-        #     _, _, urs = urs.get_components()
-        bv_list = [helper.get_boundary_values(ur) for ur, helper in zip(urs, self.helpers)]
-        if use_ef:
-            bv = BoundaryFunction(self.ebdyc)
-            bv.load_data(bv_list)
-            return bv
-        else:
-            return np.concatenate(bv_list)
-    def get_boundary_normal_derivatives(self, urs):
-        return np.concatenate([helper.get_boundary_normal_derivatives(ur) for ur, helper in zip(urs, self.helpers)])
-    def __call__(self, f, fr_list=None, **kwargs):
+    def get_boundary_values(self, u):
+        bv_list = [helper.get_boundary_values(ur) for ur, helper in zip(u, self.helpers)]
+        bv = BoundaryFunction(self.ebdyc)
+        bv.load_data(bv_list)
+        return bv
+    def get_boundary_normal_derivatives(self, u):
+        bv_list = [helper.get_boundary_normal_derivatives(ur) for ur, helper in zip(u, self.helpers)]
+        bv = BoundaryFunction(self.ebdyc)
+        bv.load_data(bv_list)
+        return bv
+    def __call__(self, f, **kwargs):
         """
-        If fr_list is None, then f should be of type EmbeddedFunction
-        (the fr_list option is to be deprecated...)
-
-        Returns either EmbeddedFunction or u/ur_list
+        f must be of type EmbeddedFunction
         """
-        use_ef = type(f) == EmbeddedFunction
-        if fr_list is None and not use_ef:
-            raise Exception('If fr_list is not provided, f must be of type EmbeddedFunction')
-        if use_ef:
-            _, fc, fr_list = f.get_components()
-            # fc = f.get_smoothed_grid_value()
-            # fr_list = f.radial_value_list
-        else:
-            fc = f*self.grid_step
+        _, fc, fr_list = f.get_components()
         # get the grid-based solution
         uc = self._grid_solve(fc)
         # interpolate the solution to the interface
@@ -89,7 +81,7 @@ class ScalarSolver(object):
         self.iteration_counts = [helper.iterations_last_call for helper in self.helpers]
         # we now need to evaluate this onto the grid / interface points
         sigmag = np.concatenate(sigmag_list)
-        out = self.Layer_Apply(self.ebdyc.grid_source, self.ebdyc.grid_pnai, sigmag)
+        out = self.Layer_Apply(self.grid_sources, self.ebdyc.grid_pnai, sigmag)
         # need to divide this apart
         gu, bus = self.ebdyc.divide_pnai(out)
         # we can now add gu directly to uc
@@ -99,12 +91,9 @@ class ScalarSolver(object):
         # interpolate urs onto uc
         _ = self.ebdyc.interpolate_radial_to_grid1(urs, uc)
         uc *= self.ebdyc.phys
-        if use_ef:
-            ue = EmbeddedFunction(self.ebdyc)
-            ue.load_data(uc, urs)
-            return ue
-        else:
-            return uc, urs
+        ue = EmbeddedFunction(self.ebdyc)
+        ue.load_data(uc, urs)
+        return ue
     def _define_layer_apply(self):
         self.Layer_Apply = self.helpers[0].Layer_Apply
 

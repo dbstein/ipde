@@ -139,7 +139,8 @@ class VectorHelper(object):
             sigma_r_tot = self.sigma_r
         else:  ######## THIS NEEDS TO BE FIXED TO ALLOW FOR PRESSURE CORRECTIONS=!!!!
             # First, we get the u on our interface associate with our sigma_g
-            w = self.Layer_Apply(self.ebdy.interface_grid_source, self.ebdy.interface, self.sigma_g)
+            src = self.interface_qfs_g.source
+            w = self.Layer_Apply(src, self.ebdy.interface, self.sigma_g)
             # now subtract this from the given ub
             ub = ub - w[0]
             vb = vb - w[1]
@@ -152,7 +153,8 @@ class VectorHelper(object):
             sigma_r_tot = sigma_r_adj + self.sigma_r
 
         # evaluate this onto radial points and add to ur
-        rslp = self.Layer_Apply(self.ebdy.interface_radial_source, self.ebdy.radial_targ, sigma_r_tot)
+        src = self.interface_qfs_r.source
+        rslp = self.Layer_Apply(src, self.ebdy.radial_targ, sigma_r_tot)
         self.ur += rslp[0].reshape(self.ur.shape)
         self.vr += rslp[1].reshape(self.ur.shape)
         self.pr += rslp[2].reshape(self.pr.shape)

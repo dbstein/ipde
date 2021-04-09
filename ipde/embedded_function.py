@@ -1,6 +1,7 @@
 import numpy as np
 import pybie2d
 import weakref
+from ipde.embedded_boundary import EmbeddedBoundary
 
 def LoadEmbeddedFunction(d, ebdyc=None):
     from ipde.ebdy_collection import LoadEmbeddedBoundaryCollection
@@ -20,14 +21,26 @@ class EmbeddedFunction(np.ndarray):
 
     Goal: Handle vector/tensor valued functions seamlessly!
     """
-    def __new__(cls, ebdyc, dtype=float, array=None):
+    def __new__(cls, ebdyc, dtype=float, array=None, function=None, grid_value=None, radial_value_list=None, linear_data=None, zero=False):
         gn = ebdyc.grid_phys.N
         rn = np.sum([np.product(ebdy.radial_shape) for ebdy in ebdyc])
         n = gn + rn
         if array is None:
             array = super(EmbeddedFunction, cls).__new__(cls, n, dtype)
         array.ebdyc = weakref.ref(ebdyc)
-        return array.view(EmbeddedFunction)
+        out = array.view(EmbeddedFunction)
+        if function is not None:
+            out.define_via_function(function)
+        if grid_value is not None and radial_value_list is not None:
+            out.load_data(grid_value, radial_value_list)
+        if grid_value is not None and radial_value_list is None:
+            out.load_full_grid(grid_value)
+        if linear_data is not None:
+            out.load_linear_data(linear_data)
+        if zero:
+            out.zero()
+        return out
+        # return array.view(EmbeddedFunction)
     def __array_finalize__(self, obj):
         if obj is None: return
         self.ebdyc = getattr(obj, 'ebdyc', None)
@@ -98,6 +111,14 @@ class EmbeddedFunction(np.ndarray):
             gd[:] = grid_value[ebdyc.phys]
         for arg, rv in enumerate(radial_value_list):
             self.__setitem__(arg, rv)
+    def load_full_grid(self, grid_value):
+        """
+        Load data from a set of values defined on the *whole* grid
+        if it's not defined on the whole grid, this won't be accurate
+        """
+        ebdyc = self._ebdyc_test()
+        rvl = ebdyc.interpolate_grid_to_radial(grid_value, order=5)
+        self.load_data(grid_value, rvl)
     def load_linear_data(self, data):
         # should this make a copy or a replacement????
         # probably safer to make a copy...
@@ -171,3 +192,126 @@ class EmbeddedFunction(np.ndarray):
         Compute the volume integral of this function
         """
         return self._ebdyc_test().volume_integral(self)
+    def gradient(self):
+        return self._ebdyc_test().gradient(self)
+    def get_ebdyc(self):
+        return self._ebdyc_test()
+    def extract_pnar(self):
+        # there is a better way to do this...
+        gv, _, rvl = self.get_components()
+        gvp = gv[self._ebdyc_test().phys_not_in_annulus]
+        rvlf = [rv.ravel() for rv in rvl]
+        rv = np.concatenate(rvlf)
+        return np.concatenate([gvp, rv])
+
+class BoundaryFunction(np.ndarray):
+    """
+    Updated version of the BoundaryFunction Class
+    Now subclasses np.ndarray
+    """
+    def __new__(cls, ebdyc, dtype=float, array=None, function=None, functions=None, data=None, zero=False):
+        n = np.sum([ebdy.bdy.N for ebdy in ebdyc])
+        if array is None:
+            array = super(BoundaryFunction, cls).__new__(cls, n, dtype)
+        array.ebdyc = weakref.ref(ebdyc)
+        out = array.view(BoundaryFunction)
+        out.defined = False
+        if function is not None:
+            out.define_via_function(function)
+        if functions is not None:
+            out.define_via_functions(functions)
+        if data is not None:
+            out.load_data(data)
+        if zero:
+            out.zero()
+        return out
+    def __array_finalize__(self, obj):
+        if obj is None: return
+        self.ebdyc = getattr(obj, 'ebdyc', None)
+        self.defined = getattr(obj, 'defined', None)
+        self._generate()
+    def _ebdyc_test(self):
+        ebdyc = self.ebdyc()
+        if ebdyc is not None:
+            return ebdyc
+        else:
+            raise Exception('Underlying ebdyc has been deleted.')
+    def _generate(self):
+        ebdyc = self._ebdyc_test()
+        self.ns = [ebdy.bdy.N for ebdy in ebdyc]
+        sum_ns = np.concatenate([(0,), np.cumsum(self.ns)])
+        # accessor for individual components
+        self.slices = []
+        for i in range(ebdyc.N):
+            self.slices.append( slice(sum_ns[i], sum_ns[i+1]) )
+    def _locate_ebdy(self, e):
+        is_it_i = [e is ebdy for ebdy in self.ebdyc]
+        ind = np.where(is_it_i)[0]
+        if type(ind) != int:
+            raise Exception('EmbeddedBoundary not found in EmbeddedBoundaryCollection definining this BoundaryFunction')
+        return ind
+    def __getitem__(self, arg):
+        if type(arg) == int:
+            return super().__getitem__(self.slices[arg]).view(np.ndarray)
+        elif type(arg) == EmbeddedBoundary:
+            return self[self._locate_ebdy(ebdy)]
+        else:
+            return super().__getitem__(arg).view(np.ndarray)
+    def __setitem__(self, arg, value):
+        if type(arg) == int:
+            super().__setitem__(self.slices[arg], value.ravel())
+        elif type(arg) == EmbeddedBoundary:
+            self[self._locate_ebdy(ebdy)] = value
+        else:
+            super().__setitem__(arg, value)
+    def load_data(self, bdy_value_list):
+        ebdyc = self._ebdyc_test()
+        for ei, ebdy in enumerate(ebdyc):
+            self[ei] = bdy_value_list[ei]
+        self.bdy_value_list = bdy_value_list
+        self.defined = True
+    def define_via_function(self, f):
+        ebdyc = self._ebdyc_test()
+        for ei, ebdy in enumerate(ebdyc):
+            self[ei] = f(ebdy.bdy.x, ebdy.bdy.y)
+        self.defined = True
+    def define_via_functions(self, f_list):
+        ebdyc = self._ebdyc_test()
+        for ind in range(ebdyc.N):
+            ebdy = ebdyc[ind]
+            self[ind] = f_list[ind](ebdy.bdy.x, ebdy.bdy.y)
+        self.defined = True
+    
+    def min(self):
+        return np.min(self.data)
+    def max(self):
+        return np.max(self.data)
+
+    def __str__(self):
+        ebdyc = self._ebdyc_test()
+        if self.defined:
+            string = '\nBoundary Values (first 5 boundaries):\n'
+            for i in range(min(ebdyc.N, 5)):
+                string += 'Boundary ' + str(i) + '\n'
+                string += self[i].__str__()
+                if i < 4: string += '\n'
+            return string
+        else:
+            return 'BoundaryFunction not yet defined.'
+    def __repr__(self):
+        return self.__str__()
+
+    def copy(self):
+        return BoundaryFunction(self.ebdyc, data=self.asarray().copy())
+
+    def asarray(self):
+        return np.array(self)
+    def zero(self):
+        super().__setitem__(slice(None, None), 0.0)
+        self.defined=True
+
+
+
+
+
+

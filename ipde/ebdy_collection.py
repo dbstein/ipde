@@ -793,9 +793,15 @@ class EmbeddedBoundaryCollection(object):
 
 class BoundaryFunction(object):
     # I should make this subclass np.ndarray at some point?
-    def __init__(self, ebdyc):
+    def __init__(self, ebdyc, function=None, functions=None, data=None):
         self.ebdyc = ebdyc
         self.defined = False
+        if function is not None:
+            self.define_via_function(function)
+        if functions is not None:
+            self.define_via_functions(functions)
+        if data is not None:
+            self.load_data(data)
     def __getitem__(self, ind):
         return self.bdy_value_list[ind]
     def __setitem__(self, ind, value):
@@ -803,6 +809,8 @@ class BoundaryFunction(object):
     def load_data(self, bdy_value_list):
         self.bdy_value_list = bdy_value_list
         self.defined = True
+    def zeros(self):
+        return self.define_via_function(np.vectorize(lambda x, y: 0.0))
     def define_via_function(self, f):
         self.bdy_value_list = [f(ebdy.bdy.x, ebdy.bdy.y) for ebdy in self.ebdyc.ebdys]
         self.defined = True
@@ -811,6 +819,8 @@ class BoundaryFunction(object):
         self.defined = True
     def aggregate(self):
         return np.concatenate(self.bdy_value_list)
+    def __call__(self):
+        return self.aggregate()
     def __add__(self, other):
         out = BoundaryFunction(self.ebdyc)
         outv = [s + o for s, o in zip(self.bdy_value_list, other.bdy_value_list)]
@@ -850,6 +860,5 @@ class BoundaryFunction(object):
             copy.load_data(self.bdy_value_list)
         return copy
 
-            
 
 

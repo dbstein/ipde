@@ -84,7 +84,10 @@ class SlepianMollifier(object):
         return FunctionGenerator(fi, -1, 1, 1e-14)
     def _construct(self):
         self._x, self._h = np.linspace(-1, 1, self.N, endpoint=True, retstep=True)
-        w = sp.signal.slepian(self.N, float(self.r)/self.N)
+        try:
+            w = sp.signal.windows.dpss(self.N, 0.25*float(self.r))
+        except:
+            w = sp.signal.slepian(self.N, float(self.r)/self.N)
         self._bump = self._interpolate(w)
         w_int = np.zeros(self.N, dtype=float)
         for i in range(1, self.N):

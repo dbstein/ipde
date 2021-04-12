@@ -1,7 +1,12 @@
 import numpy as np
 import pybie2d
 import fast_interp
-import finufftpy
+try:
+    import finufftpy
+    old_nufft = True
+except:
+    import finufft
+    old_nufft = False
 PointSet = pybie2d.point_set.PointSet
 from near_finder.points_near_curve import points_near_curve_coarse
 from near_finder.phys_routines import points_inside_curve_update
@@ -582,7 +587,10 @@ class EmbeddedBoundaryCollection(object):
         """
         funch = np.fft.fft2(f)
         out = np.zeros(self.interfaces_x_transf.size, dtype=complex)
-        diagnostic = finufftpy.nufft2d2(self.interfaces_x_transf, self.interfaces_y_transf, out, 1, 1e-14, funch, modeord=1)
+        if old_nufft:
+            diagnostic = finufftpy.nufft2d2(self.interfaces_x_transf, self.interfaces_y_transf, out, 1, 1e-14, funch, modeord=1)
+        else:
+            diagnostic = finufft.nufft2d2(self.interfaces_x_transf, self.interfaces_y_transf, funch, out, isign=1, eps=1e-14, modeord=1)
         return out.real/np.prod(funch.shape)
     def update_radial_to_grid1(self, f):
         # _, fg, fr = f.get_components()
@@ -658,7 +666,10 @@ class EmbeddedBoundaryCollection(object):
                 zone1 = p.zone1
                 funch = np.fft.fft2(ff.get_smoothed_grid_value())
                 out = np.zeros(p.zone1_N, dtype=complex)
-                diagnostic = finufftpy.nufft2d2(p.x_transf, p.y_transf, out, 1, 1e-14, funch, modeord=1)
+                if old_nufft:
+                    diagnostic = finufftpy.nufft2d2(p.x_transf, p.y_transf, out, 1, 1e-14, funch, modeord=1)
+                else:
+                    diagnostic = finufft.nufft2d2(p.x_transf, p.y_transf, funch, out, isign=1, eps=1e-14, modeord=1)
                 out.real/np.prod(funch.shape)
                 output[zone1] = out.real/np.prod(funch.shape)
         if c2n > 0:

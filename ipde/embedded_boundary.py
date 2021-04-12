@@ -1,6 +1,11 @@
 import numpy as np
 import pybie2d
-import finufftpy
+try:
+    import finufftpy
+    old_nufft = True
+except:
+    import finufft
+    old_nufft = False
 GSB = pybie2d.boundaries.global_smooth_boundary.global_smooth_boundary.Global_Smooth_Boundary
 PointSet = pybie2d.point_set.PointSet
 from near_finder.points_near_curve import gridpoints_near_curve_update, gridpoints_near_curve
@@ -421,7 +426,10 @@ class EmbeddedBoundary(object):
         funch = np.fft.fft2(self.interpolation_hold)*self.interpolation_modifier
         funch[self.M] = 0.0
         out = np.empty(t.size, dtype=complex)
-        diagnostic = finufftpy.nufft2d2(transf_r, t, out, 1, 1e-14, funch, modeord=1)
+        if old_nufft:
+            diagnostic = finufftpy.nufft2d2(transf_r, t, out, 1, 1e-14, funch, modeord=1)
+        else:
+            diagnostic = finufft.nufft2d2(transf_r, t, funch, out, isign=1, eps=1e-14, modeord=1)
         vals = out.real/np.prod(funch.shape)
         return vals
     def interpolate_radial_to_grid1(self, fr, f):

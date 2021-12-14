@@ -1,21 +1,12 @@
 import numpy as np
 import pybie2d
 import fast_interp
-try:
-    import finufftpy
-    old_nufft = True
-except:
-    import finufft
-    old_nufft = False
+import finufft
 PointSet = pybie2d.point_set.PointSet
-from near_finder.points_near_curve import points_near_curve_coarse
-from near_finder.phys_routines import points_inside_curve_update
-from near_finder.coordinate_routines import compute_local_coordinates
-from ipde.embedded_boundary import EmbeddedBoundary, LoadEmbeddedBoundary
 from ipde.utilities import affine_transformation
-from ipde.annular.annular import ApproximateAnnularGeometry
 from ipde.derivatives import fd_x_4, fd_y_4, fourier
-from ipde.embedded_function import EmbeddedFunction
+from ipde.embedded_function import EmbeddedFunction, BoundaryFunction
+from near_finder.phys_routines import points_inside_curve_update
 
 Grid = pybie2d.grid.Grid
 
@@ -44,40 +35,25 @@ class EmbeddedPointPartition(object):
         3) physical+not in any annulus; physical+in annulus 1;
             physical+in annulus 2; ...; physical+in annulus n; exterior
     """
-    def __init__(self, ebdyc, x, y, fix_r=False, dzl=None, gil=None):
+    def __init__(self, ebdyc, x, y, fix_r=False):
         """
         ebdyc: embedded boundary collection
         x:     x-coordinates of points to partition
         y:     y-coordinates of points to partition
         fix_r: after finding coordinates, do we set any with r that would place
                 them in the aphysical region to 0 (to lie on the boundary?)
-               note: this should only be used if you're condifident all points
+                note: this should only be used if you're condifident all points
                 are actually physical.  in this case this is really being used
                 to deal with very small errors from the Newton solver
-        dzl:   danger zone list: if available, a list of "danger zones" which
-                give points for which coordinates should be computed
-                if this is accurate enough, this will considerably speed up the
-                calculation, as a near-points finder will not need to be called
-                if it is not accurate, it may cause the coordinate solver to fail
-        gil:   guess index list: a list of "guess indeces", corresponding to
-                the "danger zone list", giving initial guesses for the
-                coordinate solving scheme
         """
         self.grid = ebdyc.grid
         self.x_check = x
         self.y_check = y
         self.fix_r = fix_r
-        self.dzl = dzl
-        self.gil = gil
         self.sh = x.shape
         self.x = x.ravel()
         self.y = y.ravel()
         self.size = self.x.size
-        if self.dzl is not None and self.gil is not None:
-            self.has_danger_zone = [dz is not None and gi is not None for
-                                        dz, gi in zip(self.dzl, self.gil)]
-        else:
-            self.has_danger_zone = [None,]*len(ebdyc)
         # zone 1 is physical and not inside an annulus
         zone1 = np.ones(self.size, dtype=bool)
         zone1_or_2 = np.ones(self.size, dtype=bool)
@@ -94,9 +70,6 @@ class EmbeddedPointPartition(object):
         zone3l = []
         zone3r = []
         zone3t = []
-        # holders for t, r for anything that we compute
-        full_t = np.empty(self.size, dtype=float)
-        full_r = np.empty(self.size, dtype=float)
         # holders for the one that has to interact with everything
         long_in_this_annulus = np.zeros(self.size, dtype=bool)
         # loop over embedded boundaries
@@ -105,80 +78,34 @@ class EmbeddedPointPartition(object):
             by = ebdy.bdy.y
             width = ebdy.radial_width
             interior = ebdy.interior
-            has_danger_zone = self.has_danger_zone[ind]
-            if has_danger_zone:
-                dz = self.dzl[ind]
-                gi = self.gil[ind]
-            else:
-                dz, gi = points_near_curve_coarse(bx, by, self.x, self.y, width)
-                gi = gi[dz]
-                dz = np.where(dz)[0]
-            # find coordinates for danger points
-            check_x = self.x[dz]
-            check_y = self.y[dz]
-            res = compute_local_coordinates(bx, by, check_x, check_y,
-                newton_tol=ebdy.coordinate_tolerance,
-                interpolation_scheme=ebdy.coordinate_scheme,
-                guess_ind=gi, verbose=False)
-            t = res[0]
-            r = res[1]
+            # find coordintes
+            full_r, full_t, have_coords, interior = ebdy.coordinate_mapper.classify(x, y)
+            r = full_r[have_coords]
+            t = full_t[have_coords]
             # fix r values, if required
             if self.fix_r:
                 ebdy.fix_r(r)
-            full_t[dz] = t
-            full_r[dz] = r
             # check on in annulus
             in_this_annulus, phys_not_in_this_annulus,  \
                                 exterior = ebdy.check_if_r_in_annulus(r)
-            # this is a plot to check on how this looks...
-            # assuming the points come from new_ebdyc
-            if False:
-                fig, ax = plt.subplots()
-                ax.pcolormesh(grid.xg, grid.yg, ebdyc.phys)
-                ax.plot(ebdyc[0].bdy.x, ebdyc[0].bdy.y, color='gray')
-                ax.plot(ebdyc[0].interface.x, ebdyc[0].interface.y, color='gray')
-                ax.plot(new_ebdyc[0].bdy.x, new_ebdyc[0].bdy.y, color='black')
-                ax.plot(new_ebdyc[0].interface.x, new_ebdyc[0].interface.y, color='black')
-                ax.scatter(check_x[in_this_annulus], check_y[in_this_annulus], color='white')
-                ax.scatter(check_x[exterior], check_y[exterior], color='orange')
-                ax.scatter(check_x[phys_not_in_this_annulus], check_y[phys_not_in_this_annulus], color='blue')
-
             # set indicators in zone1 for those owned by this boundary
-            zone1[dz] = np.logical_and(zone1[dz], phys_not_in_this_annulus)
-            zone1_or_2[dz] = np.logical_and(zone1_or_2[dz], np.logical_not(exterior))
-
-            # now save the required information in the zone2 and zone3 lists
+            is_phys = interior if ebdy.interior else ~interior
+            zone1 = np.logical_and(zone1, is_phys)
+            zone1_or_2 = np.logical_and(zone1_or_2, is_phys)
+            zone1[have_coords] = np.logical_and(zone1[have_coords], phys_not_in_this_annulus)
+            zone1_or_2[have_coords] = np.logical_and(zone1_or_2[have_coords], np.logical_not(exterior))
+            # dz is just an old name from past routines
+            dz = np.where(have_coords)[0]
+            # zone 2 inds and coords
             zone2l.append(dz[in_this_annulus])
             rhere = r[in_this_annulus]
             zone2r.append(rhere)
             zone2_transfr.append(ebdy.nufft_transform_r(rhere))
             zone2t.append(t[in_this_annulus])
-
+            # zone 3 inds and coords
             zone3l.append(dz[exterior])
             zone3r.append(r[exterior])
             zone3t.append(t[exterior])
-
-        # plot to check on zone1 / zone1_or_2
-        if False:
-            fig, ax = plt.subplots()
-            ax.pcolormesh(grid.xg, grid.yg, ebdyc.phys)
-            ax.plot(ebdyc[0].bdy.x, ebdyc[0].bdy.y, color='gray')
-            ax.plot(ebdyc[0].interface.x, ebdyc[0].interface.y, color='gray')
-            ax.plot(new_ebdyc[0].bdy.x, new_ebdyc[0].bdy.y, color='black')
-            ax.plot(new_ebdyc[0].interface.x, new_ebdyc[0].interface.y, color='black')
-            ax.scatter(self.x[zone1], self.y[zone1], color='white')
-            nz1 = np.logical_not(zone1)
-            ax.scatter(self.x[nz1], self.y[nz1], color='orange')
-
-            fig, ax = plt.subplots()
-            ax.pcolormesh(grid.xg, grid.yg, ebdyc.phys)
-            ax.plot(ebdyc[0].bdy.x, ebdyc[0].bdy.y, color='gray')
-            ax.plot(ebdyc[0].interface.x, ebdyc[0].interface.y, color='gray')
-            ax.plot(new_ebdyc[0].bdy.x, new_ebdyc[0].bdy.y, color='black')
-            ax.plot(new_ebdyc[0].interface.x, new_ebdyc[0].interface.y, color='black')
-            ax.scatter(self.x[zone1_or_2], self.y[zone1_or_2], color='white')
-            nz1_or_2 = np.logical_not(zone1_or_2)
-            ax.scatter(self.x[nz1_or_2], self.y[nz1_or_2], color='orange')
 
         # save these away
         self.zone1 = zone1
@@ -194,13 +121,11 @@ class EmbeddedPointPartition(object):
         self.full_r = full_r
 
         # get Ns
-        self.zone1_N = np.sum(self.zone1)
+        self.zone1_N = int(np.sum(self.zone1))
         self.zone2_Ns = [len(z2) for z2 in self.zone2l]
+        self.zone2_N = int(np.sum(self.zone2_Ns))
         self.zone3_Ns = [len(z3) for z3 in self.zone3l]
-        self.zone2_N = np.sum(self.zone2_Ns)
-        self.zone3_N = np.sum(self.zone3_Ns)
-
-        print(self.zone1_N, self.zone2_N, self.zone3_N)
+        self.zone3_N = int(np.sum(self.zone3_Ns))
 
         # get transformed x's, y's for NUFFT interpolation (in zone1)
         self.x_transf = affine_transformation(self.x[self.zone1], self.grid.x_bounds[0], self.grid.x_bounds[1], 0.0, 2*np.pi, use_numexpr=True)
@@ -211,21 +136,12 @@ class EmbeddedPointPartition(object):
         y_is_i = y is self.y_check
         r_is_i = fix_r == self.fix_r
         return x_is_i and y_is_i and r_is_i
+
     def reshape(self, out):
         return out.reshape(self.sh)
 
     def get_Ns(self):
         return self.zone1_N, self.zone2_N, self.zone3_N
-
-def LoadEmbeddedBoundaryCollection(d):
-    ebdy_list = [LoadEmbeddedBoundary(ebdy_dict) for ebdy_dict in d['ebdy_list']]
-    ebdyc = EmbeddedBoundaryCollection(ebdy_list)
-    if d['grid'] is not None:
-        ebdyc.register_grid(Grid(**d['grid']), danger_zone_distance=d['ddd'])
-    if d['bumpy'] is not None:
-        ebdyc.bumpy = d['bumpy']
-        ebdyc.bumpy_readied = True
-    return ebdyc
 
 class EmbeddedBoundaryCollection(object):
     def __init__(self, ebdy_list):
@@ -264,19 +180,16 @@ class EmbeddedBoundaryCollection(object):
                 'x_endpoints' : self.grid.x_endpoints,
                 'y_endpoints' : self.grid.y_endpoints,
             }
-            ddd = self.danger_zone_distance
         else:
             grid = None
-            ddd = None
         bumpy = self.bumpy if hasattr(self, 'bumpy') else None
         d = {
             'ebdy_list' : ebdy_list,
             'grid'      : grid,
             'bumpy'     : bumpy,
-            'ddd'       : ddd,
         }
         return d
-    def generate_grid(self, h=None, Ns=None, force_square=False, danger_zone_distance=None):
+    def generate_grid(self, h=None, Ns=None, force_square=False, extra_coordinate_distance=0.0):
         """
         Auto generate an underlying grid
         Requires the first boundary to be interior
@@ -295,7 +208,7 @@ class EmbeddedBoundaryCollection(object):
         ibdy = iebdy.bdy
         # cheater space around the outside (buffer zone to make things easier)
         cheat_space = iebdy.radial_width
-        # approximate bounds
+        # approximate bounds (see if we can make these smaller!)
         xmin = ibdy.x.min() - cheat_space
         ymin = ibdy.y.min() - cheat_space
         xmax = ibdy.x.max() + 2*cheat_space # this is so we have room for bumpy...
@@ -331,7 +244,7 @@ class EmbeddedBoundaryCollection(object):
         assert np.abs(grid.xh - h) < 1e-15, 'Gridspacing not what was requested'
         assert np.abs(grid.yh - h) < 1e-15, 'Gridspacing not what was requested'
         # register this grid
-        self.register_grid(grid, danger_zone_distance=danger_zone_distance)
+        self.register_grid(grid, extra_coordinate_distance=extra_coordinate_distance)
         # flag that the bumpy hasn't been constructed
         if self.bumpy_readied:
             self.bumpy_readied = False
@@ -348,37 +261,26 @@ class EmbeddedBoundaryCollection(object):
             physical = np.logical_and(physical, ph)
         return physical
 
-    def register_grid(self, grid, danger_zone_distance=None, verbose=False):
+    def register_grid(self, grid, verbose=False):
         """
-        Register a grid object
+        Register a grid object, construct a quadtree-based coordinate mapper
 
         grid: grid of type(Grid) from pybie2d (see pybie2d doc)
-        verbose (optional):
-            bool, whether to pass verbose output onto gridpoints_near_curve
         """
         self.grid = grid
-        self.danger_zone_distance = danger_zone_distance
 
-        # generate memory for phys/close arrays
-        close        = np.zeros(grid.shape, dtype=bool)
-        int_helper1  = np.zeros(grid.shape, dtype=int)
-        int_helper2  = np.zeros(grid.shape, dtype=int)
-        float_helper = np.full(grid.shape, np.Inf, dtype=float)
-        bool_helper  = np.zeros(grid.shape, dtype=bool)
-        for ei, ebdy in enumerate(self):
-            index = ei + 1
-            if verbose:
-                print('Regisgering ebdy #', index, 'of', self.N)
-            ebdy.register_grid(self.grid, close, int_helper1, int_helper2, 
-                float_helper, bool_helper, index,
-                danger_zone_distance=danger_zone_distance, verbose=verbose)
+        # perform individual ebdy registration
+        for ebdy in self:
+            ebdy.register_grid(grid)
 
         # now get the physical region
         phys = np.zeros(grid.shape, dtype=bool) if self.ebdys[0].interior \
                     else np.ones(grid.shape, dtype=bool)
         for ebdy in self:
-            points_inside_curve_update(self.grid.xv, self.grid.yv, 
-                ebdy.near_curve_result, phys, inside=ebdy.interior)
+            if ebdy.interior:
+                phys = np.logical_or(phys, ebdy.grid_interior)
+            else:
+                phys = np.logical_or(phys, ebdy.grid_exterior)
         self.phys = phys
         self.ext = np.logical_not(self.phys)
         self.phys_inds = np.zeros(grid.shape, dtype=int)
@@ -401,9 +303,6 @@ class EmbeddedBoundaryCollection(object):
         ia[iax, iay] = True
         self.in_annulus = ia
         self.phys_not_in_annulus = np.logical_and(self.phys, np.logical_not(self.in_annulus))
-        # register ia_inds for each ebdy
-        for ebdy in self:
-            ebdy.register_ia_inds(self.phys_inds)
 
         # construct the full grid_step
         self.grid_step = self.phys.astype(float)
@@ -433,33 +332,6 @@ class EmbeddedBoundaryCollection(object):
         grid_pna_y = self.grid.yg[self.phys_not_in_annulus]
         self.grid_pna = PointSet(grid_pna_x, grid_pna_y)
         self.grid_pna_num = self.grid_pna.N
-        # danger zone informatioin for pna
-        if danger_zone_distance is not None:
-            pna_ordering = np.full(self.grid.shape, -1, dtype=int)
-            pna_ordering[self.phys_not_in_annulus] = np.arange(self.grid_pna_num)
-            self.danger_zone_list = []
-            self.guess_ind_list = []
-            start_ind = self.grid_pna_num
-            for ind, ebdy in enumerate(self):
-                # points in phys/not annulus
-                idx = ebdy.grid_in_danger_zone_x
-                idy = ebdy.grid_in_danger_zone_y
-                gi  = ebdy.grid_in_danger_zone_gi
-                short_pna_ordering = pna_ordering[idx, idy]
-                sel = short_pna_ordering != -1
-                dz1 = short_pna_ordering[sel]
-                gz1 = gi[sel]
-                # points in associated radial region
-                tot = np.prod(ebdy.radial_shape)
-                dz2 = start_ind + np.arange(tot)
-                gz2 = ebdy.near_radial_guess_inds.ravel()
-                start_ind += tot
-                # put these together
-                dz = np.concatenate([dz1, dz2])
-                gz = np.concatenate([gz1, gz2])
-                # append lists
-                self.danger_zone_list.append(dz)
-                self.guess_ind_list.append(gz)
 
         # physical gridpoints that aren't in annuluas and radial gridpoints
         xx = np.concatenate([grid_pna_x, self.radial_x])
@@ -489,18 +361,6 @@ class EmbeddedBoundaryCollection(object):
         grid_pnai_x = np.concatenate([grid_pna_x, self.all_ivx])
         grid_pnai_y = np.concatenate([grid_pna_y, self.all_ivy])
         self.grid_pnai = PointSet(grid_pnai_x, grid_pnai_y)
-
-        # interface --> gridpoint/radial effective source points
-        grid_source_list = [ebdy.interface_grid_source for ebdy in self.ebdys]
-        radial_source_list = [ebdy.interface_radial_source for ebdy in self.ebdys]
-        self.grid_source = merge_sources(grid_source_list)
-        self.radial_source = merge_sources(radial_source_list)
-
-        # bdy --> gridpoint/radial effective source points
-        bdy_inward_source_list = [ebdy.bdy_inward_source for ebdy in self.ebdys]
-        bdy_outward_source_list = [ebdy.bdy_outward_source for ebdy in self.ebdys]
-        self.bdy_inward_sources = merge_sources(bdy_inward_source_list)
-        self.bdy_outward_sources = merge_sources(bdy_outward_source_list)
 
         # get the Ns for each bounday
         self.bdy_Ns = [ebdy.bdy.N for ebdy in self.ebdys]
@@ -607,10 +467,7 @@ class EmbeddedBoundaryCollection(object):
         """
         funch = np.fft.fft2(f)
         out = np.zeros(self.interfaces_x_transf.size, dtype=complex)
-        if old_nufft:
-            diagnostic = finufftpy.nufft2d2(self.interfaces_x_transf, self.interfaces_y_transf, out, 1, 1e-14, funch, modeord=1)
-        else:
-            diagnostic = finufft.nufft2d2(self.interfaces_x_transf, self.interfaces_y_transf, funch, out, isign=1, eps=1e-14, modeord=1)
+        diagnostic = finufft.nufft2d2(self.interfaces_x_transf, self.interfaces_y_transf, funch, out, isign=1, eps=1e-14, modeord=1)
         return out.real/np.prod(funch.shape)
     def update_radial_to_grid1(self, f):
         # _, fg, fr = f.get_components()
@@ -618,12 +475,12 @@ class EmbeddedBoundaryCollection(object):
         # _ = self.interpolate_radial_to_grid(f, fg)
     def interpolate_radial_to_grid1(self, fr_list, f=None):
         return [ebdy.interpolate_radial_to_grid1(fr, f) for ebdy, fr in zip(self.ebdys, fr_list)]
-    def update_radial_to_grid2(self, f):
-        # _, fg, fr = f.get_components()
-        _ = self.interpolate_radial_to_grid2(f.get_radial_value_list(), f['grid'])
-        # _ = self.interpolate_radial_to_grid(f, fg)
-    def interpolate_radial_to_grid2(self, fr_list, f=None):
-        return [ebdy.interpolate_radial_to_grid2(fr, f) for ebdy, fr in zip(self.ebdys, fr_list)]
+    # def update_radial_to_grid2(self, f):
+    #     # _, fg, fr = f.get_components()
+    #     _ = self.interpolate_radial_to_grid2(f.get_radial_value_list(), f['grid'])
+    #     # _ = self.interpolate_radial_to_grid(f, fg)
+    # def interpolate_radial_to_grid2(self, fr_list, f=None):
+    #     return [ebdy.interpolate_radial_to_grid2(fr, f) for ebdy, fr in zip(self.ebdys, fr_list)]
     def merge_grids(self, f):
         for ebdy, fr in zip(self.ebdys, f.radial_value_list):
             ebdy.merge_grids(f.grid_value, fr)
@@ -648,23 +505,23 @@ class EmbeddedBoundaryCollection(object):
 
     ############################################################################
     # Functions for dealing with interpolation to generic sets of points
-    def get_interpolation_key(self, x, y, fix_r=False, dzl=None, gil=None):
+    def get_interpolation_key(self, x, y, fix_r=False):
         here = [p.is_it_i(x, y, fix_r) for p in self.registered_partitions]
         where = np.where(here)[0]
         if len(where) > 0:
             key = where[0]
         else:
-            key = self._register_points(x, y, fix_r, dzl, gil)
+            key = self._register_points(x, y, fix_r)
         return key
-    def register_points(self, x, y, fix_r=False, dzl=None, gil=None):
-        return self.get_interpolation_key(x, y, fix_r, dzl, gil)
-    def _register_points(self, x, y, fix_r=False, dzl=None, gil=None):
+    def register_points(self, x, y, fix_r=False):
+        return self.get_interpolation_key(x, y, fix_r)
+    def _register_points(self, x, y, fix_r=False):
         k = len(self.registered_partitions)
-        p = EmbeddedPointPartition(self, x, y, fix_r, dzl, gil)
+        p = EmbeddedPointPartition(self, x, y, fix_r)
         self.registered_partitions.append(p)
         return k
-    def interpolate_to_points(self, ff, x, y, fix_r=False, dzl=None, gil=None):
-        key = self.get_interpolation_key(x, y, fix_r, dzl, gil)
+    def interpolate_to_points(self, ff, x, y, fix_r=False):
+        key = self.get_interpolation_key(x, y, fix_r)
         p = self.registered_partitions[key]
         # get the category numbers
         c1n, c2n, c3n = p.get_Ns()
@@ -672,26 +529,12 @@ class EmbeddedBoundaryCollection(object):
         output = np.empty(x.size)
         # interpolate appropriate portion with grid (polynomial, for now...)
         if c1n > 0:
-            if False:
-                zone1 = p.zone1
-                f = ff.get_grid_value()
-                grid = self.grid
-                lbds = [self.grid.x_bounds[0], self.grid.y_bounds[0]]
-                ubds = [self.grid.x_bounds[1], self.grid.y_bounds[1]]
-                hs =   [self.grid.xh, self.grid.yh]
-                interp = fast_interp.interp2d(lbds, ubds, hs, f, k=7, p=[True, True])
-                output[zone1] = interp(x[zone1], y[zone1])
-            else:
-                # HERE
-                zone1 = p.zone1
-                funch = np.fft.fft2(ff.get_smoothed_grid_value())
-                out = np.zeros(p.zone1_N, dtype=complex)
-                if old_nufft:
-                    diagnostic = finufftpy.nufft2d2(p.x_transf, p.y_transf, out, 1, 1e-14, funch, modeord=1)
-                else:
-                    diagnostic = finufft.nufft2d2(p.x_transf, p.y_transf, funch, out, isign=1, eps=1e-14, modeord=1)
-                out.real/np.prod(funch.shape)
-                output[zone1] = out.real/np.prod(funch.shape)
+            zone1 = p.zone1
+            funch = np.fft.fft2(ff.get_smoothed_grid_value())
+            out = np.zeros(p.zone1_N, dtype=complex)
+            diagnostic = finufft.nufft2d2(p.x_transf, p.y_transf, funch, out, isign=1, eps=1e-14, modeord=1)
+            out.real/np.prod(funch.shape)
+            output[zone1] = out.real/np.prod(funch.shape)
         if c2n > 0:
             for ind in range(self.N):
                 ebdy = self[ind]
@@ -793,7 +636,7 @@ class EmbeddedBoundaryCollection(object):
 
     ############################################################################
     # Functions for handling the de-meaning of functions
-    def ready_bump(self, bump, bump_loc=None, bump_width=None):
+    def ready_bump(self, bump_loc=None, bump_width=None):
         if bump_width == None:
             bump_width = self[0].radial_width
         if bump_loc == None:
@@ -801,7 +644,7 @@ class EmbeddedBoundaryCollection(object):
                 raise Exception('if ebdyc has no bump_location, need to give bump_loc')
             bump_loc = self.bump_location
         grr = np.hypot(self.grid.xg-bump_loc[0], self.grid.yg-bump_loc[1])
-        bumpy = bump(affine_transformation(grr, 0, bump_width, 0, 1))
+        bumpy = self[0].heaviside.bump(affine_transformation(grr, 0, bump_width, 0, 1))
         bumpy_int = self.grid_integral(bumpy)
         self.bumpy = bumpy / bumpy_int
         self.bumpy_readied = True
@@ -827,75 +670,3 @@ class EmbeddedBoundaryCollection(object):
         for fr, ebdy in zip(f, self):
             integral += ebdy.radial_integral(fr)
         return integral
-
-class BoundaryFunction(object):
-    # I should make this subclass np.ndarray at some point?
-    def __init__(self, ebdyc, function=None, functions=None, data=None):
-        self.ebdyc = ebdyc
-        self.defined = False
-        if function is not None:
-            self.define_via_function(function)
-        if functions is not None:
-            self.define_via_functions(functions)
-        if data is not None:
-            self.load_data(data)
-    def __getitem__(self, ind):
-        return self.bdy_value_list[ind]
-    def __setitem__(self, ind, value):
-        self.bdy_value_list[ind] = value
-    def load_data(self, bdy_value_list):
-        self.bdy_value_list = bdy_value_list
-        self.defined = True
-    def zeros(self):
-        return self.define_via_function(np.vectorize(lambda x, y: 0.0))
-    def define_via_function(self, f):
-        self.bdy_value_list = [f(ebdy.bdy.x, ebdy.bdy.y) for ebdy in self.ebdyc.ebdys]
-        self.defined = True
-    def define_via_functions(self, f_list):
-        self.bdy_value_list = [f(ebdy.bdy.x, ebdy.bdy.y) for f, ebdy in zip(f_list, self.ebdyc.ebdys)]
-        self.defined = True
-    def aggregate(self):
-        return np.concatenate(self.bdy_value_list)
-    def __call__(self):
-        return self.aggregate()
-    def __add__(self, other):
-        out = BoundaryFunction(self.ebdyc)
-        outv = [s + o for s, o in zip(self.bdy_value_list, other.bdy_value_list)]
-        out.load_data(outv)
-        return out
-    def __radd__(self, other):
-        return self + other
-    def __neg__(self):
-        out = BoundaryFunction(self.ebdyc)
-        outv = [-s for s in self.bdy_value_list]
-        out.load_data(outv)
-        return out
-    def __sub__(self, other):
-        return self + (-other)
-    def __rsub__(self, other):
-        return -self + other
-    def __abs__(self):
-        out = BoundaryFunction(self.ebdyc)
-        outv = [np.abs(s) for s in self.bdy_value_list]
-        out.load_data(outv)
-        return out
-    def __str__(self):
-        if self.defined:
-            string = '\nBoundary Values (first 5 boundaries):\n'
-            for i in range(min(len(self.bdy_value_list), 5)):
-                string += 'Boundary ' + str(i) + '\n'
-                string += self.bdy_value_list[i].__str__()
-                if i < 4: string += '\n'
-            return string
-        else:
-            return 'BoundaryFunction not yet defined.'
-    def __repr__(self):
-        return self.__str__()
-    def copy(self):
-        copy = BoundaryFunction(self.ebdyc)
-        if self.defined:
-            copy.load_data(self.bdy_value_list)
-        return copy
-
-
-

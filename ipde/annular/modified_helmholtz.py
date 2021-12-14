@@ -1,9 +1,11 @@
 import numpy as np
-from ..utilities import fast_dot, concat, fast_LU_solve, mfft, mifft, fourier_multiply
+from ipde.utilities import fast_dot, concat, fast_LU_solve, mfft, mifft, fourier_multiply
 import scipy as sp
 import scipy.linalg
-from personal_utilities.scipy_gmres import right_gmres
+from personal_utilities.scipy_gmres import right_gmres, gmres
 import numexpr as ne
+from ipde.sparse_matvec import zSpMV_viaMKL
+import numba
 
 def scalar_laplacian(CO, AAG, RAG, uh):
     R01 = CO.R01
@@ -19,6 +21,33 @@ def scalar_laplacian(CO, AAG, RAG, uh):
     uh_rr = D12.dot(fourier_multiply(D01.dot(uh), psi1))
     luh = fourier_multiply(uh_rr+uh_tt, ipsi2)
     return luh
+
+# custom numba function for preconditioner
+# basically a batched matvec; but note the ordering for the input vector
+# this conforms with how that vector is stored in the rest of the solve
+@numba.njit(parallel=True, fastmath=True)
+def batch_matvecT_par(A, x):
+    sh = (A.shape[0], A.shape[1])
+    out = np.zeros(sh, dtype=np.complex128)
+    for i in numba.prange(A.shape[0]):
+        for j in range(A.shape[1]):
+            for k in range(A.shape[2]):
+                out[i, j] += A[i, j, k] * x[k, i]
+    return out
+@numba.njit(parallel=False, fastmath=True)
+def batch_matvecT_ser(A, x):
+    sh = (A.shape[0], A.shape[1])
+    out = np.zeros(sh, dtype=np.complex128)
+    for i in range(A.shape[0]):
+        for j in range(A.shape[1]):
+            for k in range(A.shape[2]):
+                out[i, j] += A[i, j, k] * x[k, i]
+    return out
+def batch_matvecT(A, x):
+    if A.shape[0]*A.shape[1] > 10000:
+        return batch_matvecT_par(A, x)
+    else:
+        return batch_matvecT_ser(A, x)
 
 class AnnularModifiedHelmholtzSolver(object):
     """
@@ -72,6 +101,7 @@ class AnnularModifiedHelmholtzSolver(object):
         ns =     self.ns
         M =      self.M
         self._KLUS = []
+        self._KINVS = []
         for i in range(ns):
             K = np.empty((M,M), dtype=complex)
             LL = fast_dot(aipsi2, fast_dot(D12, fast_dot(apsi1, D01))) - \
@@ -79,8 +109,19 @@ class AnnularModifiedHelmholtzSolver(object):
             K[:M-2] = self.k**2*R02 - LL
             K[M-2:M-1] = self.ia*ibcd + self.ib*ibcn
             K[M-1:M-0] = self.oa*obcd + self.ob*obcn
-            self._KLUS.append(sp.linalg.lu_factor(K))
+            # self._KLUS.append(sp.linalg.lu_factor(K)) # for old preconditioner
+            self._KINVS.append(sp.linalg.inv(K.real))
+        self.KINV = sp.sparse.block_diag(self._KINVS, 'csr').astype('complex') # for SpMV preconditioner
+        self.Stacked_KINVS = np.stack(self._KINVS).copy()
     def _preconditioner(self, fh):
+        return batch_matvecT(self.Stacked_KINVS, fh.reshape(self.small_shape)).ravel('F')
+    def _SpMV_preconditioner(self, fh):
+        # could avoid these reshapes if self.KINV constructed differently
+        # however, they don't seem to take a huge amount of time
+        w1 = fh.reshape(self.small_shape).ravel('F')
+        w2 = zSpMV_viaMKL(self.KINV, w1)
+        return w2.reshape(self.small_shape, order='F').ravel()
+    def _old_preconditioner(self, fh):
         fh = fh.reshape(self.small_shape)
         fo = np.empty(self.small_shape, dtype=complex)
         for i in range(self.ns):

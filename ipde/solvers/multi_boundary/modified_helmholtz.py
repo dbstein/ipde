@@ -1,12 +1,12 @@
 import numpy as np
 from .scalar import ScalarSolver
 from ..internals.modified_helmholtz import ModifiedHelmholtzHelper
+from ipde.grid_evaluators.modified_helmholtz_grid_evaluator import ModifiedHelmholtzFreespaceGridEvaluator, ModifiedHelmholtzGridBackend
 
 class ModifiedHelmholtzSolver(ScalarSolver):
-    def __init__(self, ebdyc, solver_type='spectral', helpers=None, k=1.0):
-        super().__init__(ebdyc, solver_type, helpers, k=k)
-    def _extract_extra_kwargs(self, k):
+    def __init__(self, ebdyc, k, solver_type='spectral', helpers=None, grid_backend='pybie2d'):
         self.k = k
+        super().__init__(ebdyc, solver_type, helpers, grid_backend)
     def _get_helper_combatibility(self, ebdy, helper):
         """
         Returns 0, 1, or 2
@@ -38,3 +38,24 @@ class ModifiedHelmholtzSolver(ScalarSolver):
         self.lap = -self.kx*self.kx - self.ky*self.ky
         self.helm = self.k**2 - self.lap
         self.ihelm = 1.0/self.helm
+    def _define_grid_evaluator(self):
+        if type(self.grid_backend) in [ModifiedHelmholtzGridBackend, ModifiedHelmholtzFreespaceGridEvaluator]:
+            if type(self.grid_backend) == ModifiedHelmholtzGridBackend:
+                self.ewald_evaluator = ModifiedHelmholtzFreespaceGridEvaluator(
+                                self.grid_backend, self.grid.xv, self.grid.yv)
+            else:
+                self.ewald_evaluator = self.grid_backend
+            def evaluator(ch):
+                return self.ewald_evaluator(
+                            self.grid_sources.get_stacked_boundary(),
+                            ch*self.grid_sources.weights)
+            self.Grid_Evaluator = evaluator
+            self.split_grid_evaluation = True
+        elif self.grid_backend == 'pybie2d':
+            self.split_grid_evaluation = False
+            def evaluator(ch):
+                return self.Layer_Apply(self.grid_sources, self.ebdyc.grid_pnai, ch)
+            self.Grid_Evaluator = evaluator
+            self.split_grid_evaluation = False
+        else:
+            raise Exception('grid_backend not recognized')

@@ -2,12 +2,14 @@ import numpy as np
 from ipde.derivatives import fourier, fd_x_4, fd_y_4
 from ipde.embedded_function import EmbeddedFunction, BoundaryFunction
 from pybie2d.boundaries.collection import BoundaryCollection
+from near_finder.nufft_interp2d import periodic_interp2d
 
 class ScalarSolver(object):
-    def __init__(self, ebdyc, solver_type='spectral', helpers=None, **kwargs):
+    def __init__(self, ebdyc, solver_type, helpers, grid_backend):
         self.ebdyc = ebdyc
         self.solver_type = solver_type
-        self._extract_extra_kwargs(**kwargs)
+        self.grid_backend = grid_backend
+        self.grid_backend = grid_backend
         if helpers is None: helpers = [None,]*self.ebdyc.N
         self.helpers = []
         for ebdy, helper in zip(self.ebdyc, helpers):
@@ -28,14 +30,14 @@ class ScalarSolver(object):
         self._define_layer_apply()
         # collect grid sources
         self._collect_grid_sources()
+        # get grid evaluator
+        self._define_grid_evaluator()
     def _collect_grid_sources(self):
         self.grid_sources = BoundaryCollection()
         for helper in self.helpers:
             self.grid_sources.add(helper.interface_qfs_g.source,
                                             'i' if helper.interior else 'e')
         self.grid_sources.amass_information()
-    def _extract_extra_kwargs(self, **kwargs):
-        pass
     def _get_helper(self, ebdy, helper):
         raise NotImplementedError
     def _grid_solve(self, fc):
@@ -59,19 +61,39 @@ class ScalarSolver(object):
         bv = BoundaryFunction(self.ebdyc)
         bv.load_data(bv_list)
         return bv
+    def evaluate_to_grid_pnai(self, sigmag):
+        if self.split_grid_evaluation:
+            grid_out = self.Grid_Evaluator(sigmag)
+            grid_pna = grid_out[self.ebdyc.phys_not_in_annulus]
+            interface_out = self.Layer_Apply(self.grid_sources, self.ebdyc.all_iv, sigmag)
+            out = np.concatenate([grid_pna, interface_out])
+        else:
+            out = self.Grid_Evaluator(sigmag)
+        return out
     def __call__(self, f, **kwargs):
         """
         f must be of type EmbeddedFunction
         """
         _, fc, fr_list = f.get_components()
         # get the grid-based solution
-        uc = self._grid_solve(fc)
-        # interpolate the solution to the interface
-        bvs = self.ebdyc.interpolate_grid_to_interface(uc, order=self.interpolation_order, cutoff=False)
-        # get the grid solution's derivatives and interpolate to interface
-        ucx, ucy = self.dx(uc), self.dy(uc)
-        bxs = self.ebdyc.interpolate_grid_to_interface(ucx, order=self.interpolation_order, cutoff=False)
-        bys = self.ebdyc.interpolate_grid_to_interface(ucy, order=self.interpolation_order, cutoff=False)
+        uch, uc = self._grid_solve(fc)
+        # get interpolate method
+        if self.interpolation_order == np.Inf:
+            # get derivatives in Fourier space
+            ucxh, ucyh = self.ikx*uch, self.iky*uch
+            uch_stack = np.stack([uch, ucxh, ucyh])
+            interpolater = periodic_interp2d(fh=uch_stack, eps=1e-14)
+            all_bvs = interpolater(self.ebdyc.interfaces_x_transf, self.ebdyc.interfaces_y_transf)
+            bvs = all_bvs[0].real
+            bxs = all_bvs[1].real
+            bys = all_bvs[2].real
+        else:
+            # interpolate the solution to the interface
+            bvs = self.ebdyc.interpolate_grid_to_interface(uc, order=self.interpolation_order, cutoff=False)
+            # get the grid solution's derivatives and interpolate to interface
+            ucx, ucy = self.dx(uc), self.dy(uc)
+            bxs = self.ebdyc.interpolate_grid_to_interface(ucx, order=self.interpolation_order, cutoff=False)
+            bys = self.ebdyc.interpolate_grid_to_interface(ucy, order=self.interpolation_order, cutoff=False)
         # convert these from lists to vectors
         bvl, bxl, byl = self.ebdyc.v2l(bvs), self.ebdyc.v2l(bxs), self.ebdyc.v2l(bys)
         # compute the needed layer potentials
@@ -81,7 +103,8 @@ class ScalarSolver(object):
         self.iteration_counts = [helper.iterations_last_call for helper in self.helpers]
         # we now need to evaluate this onto the grid / interface points
         sigmag = np.concatenate(sigmag_list)
-        out = self.Layer_Apply(self.grid_sources, self.ebdyc.grid_pnai, sigmag)
+        # out = self.Layer_Apply(self.grid_sources, self.ebdyc.grid_pnai, sigmag)
+        out = self.evaluate_to_grid_pnai(sigmag)
         # need to divide this apart
         gu, bus = self.ebdyc.divide_pnai(out)
         # we can now add gu directly to uc

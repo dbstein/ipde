@@ -10,9 +10,10 @@ GSB = pybie2d.boundaries.global_smooth_boundary.global_smooth_boundary.Global_Sm
 PointSet = pybie2d.point_set.PointSet
 from near_finder.points_near_curve import gridpoints_near_curve_update, gridpoints_near_curve
 from near_finder.phys_routines import points_inside_curve
-from ipde.heavisides import SlepianMollifier
+from ipde.slepian.chebeval_bump_step import SlepianMollifier
 from ipde.utilities import affine_transformation, get_chebyshev_nodes, SimpleFourierFilter
 from qfs.two_d_qfs import QFS_Boundary
+from near_finder.general_tree import LightweightCoordinateTree, FullCoordinateTree
 
 def setit(name, dictionary, default):
     return dictionary[name] if name in dictionary else default
@@ -45,11 +46,13 @@ def LoadEmbeddedBoundary(d):
 def smoothit(f, factor):
     fh = np.fft.rfft(f)
     n = f.size
-    k = np.fft.rfftfreq(n, 1/n)
-    max_k = np.abs(k).max()
-    filt = np.exp(-100*(np.abs(k)/max_k)**16)
-    fh *= filt
-    # fh[int(fh.size*factor):] = 0.0
+    if factor == 'base':
+        k = np.fft.rfftfreq(n, 1/n)
+        max_k = np.abs(k).max()
+        filt = np.exp(-100*(np.abs(k)/max_k)**16)
+        fh *= filt
+    else:
+        fh[int(fh.size*factor):] = 0.0
     return np.fft.irfft(fh)
 
 class EmbeddedBoundary(object):
@@ -74,30 +77,27 @@ class EmbeddedBoundary(object):
                 DEFAULT VALUE: 0
             heaviside:
                 regularized Heaviside function (defined on [-Inf, Inf])
-                must return 0 for x =< -1, 1 for x >= 1
+                must return 0 for x < -1, 1 for x > 1
                 DEFAULT VALUE: SlepianMollifier(2*M)
-            grid_to_radial_step:
-                1-heaviside function evaluated on grid
-            radial_cutoff:
-                heaviside evaluated on radial grid
             coordinate_tolerance:
                 tolerance used when finding local coordinates
                 DEFAULT VALUE: 1e-14
-            qfs_tolerance:
-                tolerance used when computing effective surfaces for qfs
-                DEFAULT VALUE: 1e-12
-            qfs_fsuf:
-                forced oversampling in qfs (useful for kernels with rapid decay)
-                DEFAULT VALUE: None
-            qfs_FF:
-                fudge factor for qfs
-                DEFAULT VALUE: 0
             coordinate_scheme:
-                interpolation scheme used for coordinate solving
+                "full" or "lightweight"
+                (only use full if this will be reused a lot)
             smoothing_factor: chop off part of the boundary spectra on input
-                (takes proportion to be smoothed out)
+                can be either a number between (0, 1)
+                or 'base', which will use smoothit_base
                 DEFAULT VALUE: None
-
+            extra_coordinate_distance:
+                float, extra distance to insist coordinates are solvable in
+                DEFAULT VALUE: 0.0
+            coordinate_kwargs:
+                dictionary of extra kwargs to be passed to either LightweightCoordinateTree
+                or FullCoordinateTree, as specified coordinate_scheme
+                inner_dist and outer_dist should not be in this dictionary!
+                if they are, they will be popped.
+                DEFAULT VALUE: {}
         """
         self.bdy = bdy
         self.interior = interior
@@ -105,25 +105,20 @@ class EmbeddedBoundary(object):
         self.h = h
         self.pad_zone             = setit('pad_zone',             kwargs, 0    )
         self.coordinate_tolerance = setit('coordinate_tolerance', kwargs, 1e-10)
-        self.qfs_tolerance        = setit('qfs_tolerance',        kwargs, 1e-10)
-        self.qfs_fsuf             = setit('qfs_fsuf',             kwargs, None )
-        self.qfs_FF               = setit('qfs_FF',               kwargs, 0.0 )
-        self.coordinate_scheme    = setit('coordinate_scheme',    kwargs, 'nufft')
+        self.coordinate_scheme    = setit('coordinate_scheme',    kwargs, 'lightweight')
         self.smoothing_factor     = setit('smoothing_factor',     kwargs, None)
-
-        # if grid_to_radial_step and radial_cutoff are provided, we don't need a heaviside...
-        if 'grid_to_radial_step' in kwargs and 'radial_cutoff' in kwargs:
-            self.grid_to_radial_step = kwargs['grid_to_radial_step']
-            self.radial_cutoff = kwargs['radial_cutoff']
-            self.have_heavisides = True
-        else:
-            # do this one differently to avoid constructing SlepianMollifier if not needed
-            self.heaviside = kwargs['heaviside'] if 'heaviside' in kwargs else SlepianMollifier(2*self.M).step
-            self.have_heavisides = False
+        self.extra_coordinate_distance = setit('extra_coordinate_distance', kwargs, 0.0)
+        self.coordinate_kwargs    = setit('coordinate_kwargs',    kwargs, {})
 
         # parameters that depend on other parameters
         self.radial_width = self.M*self.h
         self.heaviside_width = self.radial_width - self.pad_zone*self.h
+
+        # extract or generate Heaviside function
+        if 'heaviside' in kwargs:
+            self.heaviside = heaviside
+        else:
+            self.heaviside = SlepianMollifier(2*self.M)
 
         # smooth the boundary, if requested
         if self.smoothing_factor is not None:
@@ -131,15 +126,11 @@ class EmbeddedBoundary(object):
             smooth_y = smoothit(self.bdy.y, self.smoothing_factor)
             self.bdy = GSB(smooth_x, smooth_y)
 
+        # construct coordinate mapper (from the get-go, now)
+        self.construct_coordinate_mapper()
+
         # construct radial grid
         self._generate_radial_grid()
-
-        # construct QFS boundaries
-        self._generate_qfs_boundaries()
-
-        # helper for near-radial interpolation
-        self.near_radial_guess_inds = \
-            np.tile(np.arange(self.bdy.N), self.M).reshape(self.M, self.bdy.N)
 
         self.kwargs = kwargs
 
@@ -147,17 +138,11 @@ class EmbeddedBoundary(object):
         """
         Create a new ebdy, with new boundary bx, by, but everything else the same
         """
-        # importantly, we need to delete grid_to_radial_step and radial_cutoff
-        # from self.kwargs so they are remade
-        new_kwargs = self.kwargs.copy()
-        if 'grid_to_radial_step' in new_kwargs:
-            new_kwargs.pop('grid_to_radial_step')
-        if 'radial_cutoff' in new_kwargs:
-            _ = new_kwargs.pop('radial_cutoff')
         bdy = GSB(x=bx.copy(), y=by.copy())
-        return EmbeddedBoundary(bdy, self.interior, self.M, self.h, **new_kwargs)
+        return EmbeddedBoundary(bdy, self.interior, self.M, self.h, **kwargs)
 
     def save(self):
+        # NEEDS TO BE REWRITTEN
         """
         Generate a dictionary sufficient for recreating the ebdy object
         """
@@ -175,107 +160,88 @@ class EmbeddedBoundary(object):
         }
         return d
 
-    def search_for_physical_points(self, grid):
-        """
-        This routine is kinda crappy.  Should update to use the sparse routines...
-        """
-        res = gridpoints_near_curve(self.bdy.x, self.bdy.y, grid.xv, grid.yv, self.radial_width)
-        return points_inside_curve(grid.xg, grid.yg, res, inside=self.interior)
+    def construct_coordinate_mapper(self):
+        if 'inner_dist' in self.coordinate_kwargs:
+            self.coordinate_kwargs.pop('inner_dist')
+        if 'outer_dist' in self.coordinate_kwargs:
+            self.coordinate_kwargs.pop('outer_dist')
+        if self.interior:
+            self.inner_radial_distance = self.radial_width
+            self.outer_radial_distance = 0.0
+        else:
+            self.inner_radial_distance = 0.0
+            self.outer_radial_distance = self.radial_width
+        self.inner_coordinate_distance = self.inner_radial_distance + self.extra_coordinate_distance
+        self.outer_coordinate_distance = self.outer_radial_distance + self.extra_coordinate_distance
+        self.coordinate_search_kwargs = {}
+        if self.coordinate_scheme == 'lightweight':
+            Tree = LightweightCoordinateTree
+            self.coordinate_search_kwargs['newton_tol'] = self.coordinate_tolerance
+        elif self.coordinate_scheme == 'full':
+            Tree = FullCoordinateTree
+            self.coordinate_kwargs['tol'] = self.coordinate_tolerance
+        else:
+            raise Exception("coordinate_scheme must be 'lightweight' or 'full'")
+        self.coordinate_mapper = Tree(
+                                    self.bdy,
+                                    self.inner_coordinate_distance,
+                                    self.outer_coordinate_distance,
+                                    **self.coordinate_kwargs
+                                )
 
-    def register_grid(self, grid, close, int_helper1, int_helper2, float_helper, bool_helper, index, danger_zone_distance=None, verbose=False):
+    def search_for_physical_points(self, grid):
+        out = self.coordinate_mapper(grid.xv, grid.yv, grid=True, **self.coordinate_search_kwargs)
+        return out[1]
+
+    def register_grid(self, grid):
         """
         Register a grid object
 
         grid (required):
             grid of type(Grid) from pybie2d (see pybie2d doc)
-        verbose (optional):
-            bool, whether to pass verbose output onto gridpoints_near_curve
         """
         self.grid = grid
         
         ########################################################################
         # Locate grid points in annulus/curve and compute coordinates
         
-        ddd = danger_zone_distance if danger_zone_distance is not None else 0.0
-
-        # find near points and corresponding coordinates
-        out = gridpoints_near_curve_update(self.bdy.x, self.bdy.y, 
-            self.grid.xv, self.grid.yv, self.radial_width+ddd, index, close,
-            int_helper1, int_helper2, float_helper, bool_helper,
-            interpolation_scheme=self.coordinate_scheme,
-            tol=self.coordinate_tolerance, verbose=verbose)
-        self.near_curve_result = out
-        # wrangle output from gridpoints_near_curve
-        nclose = out[0]
-        iax = out[1]
-        iay = out[2]
-        r = out[3]
-        t = out[4]
-        # actually in annulus
-        ia_good, _, _ = self.check_if_r_in_annulus(r)
-        # reduce to the good ones
-        iax_small = iax[ia_good]
-        iay_small = iay[ia_good]
-        r_small   = r  [ia_good]
-        t_small   = t  [ia_good]
-
-        # save coordinate values for those points that are in annulus
-        self.grid_ia_xind = iax_small
-        self.grid_ia_yind = iay_small
-        self.grid_ia_x = self.grid.xv[iax_small]
-        self.grid_ia_y = self.grid.yv[iay_small]
+        # get coordinates for points in radial region
+        codes, interior, computed, r, t = self.coordinate_mapper(
+                                            self.grid.xg,
+                                            self.grid.yg,
+                                            inner_coord=self.inner_radial_distance,
+                                            outer_coord=self.outer_radial_distance,
+                                            grid=False,
+                                            **self.coordinate_search_kwargs
+                                        )
+        # store interior / exterior bools
+        self.grid_interior = interior
+        self.grid_exterior = ~interior
+        # compute those in the annulus
+        ia = codes == 1
+        # reduce to those in the annulus
+        r_small = r[ia]
+        t_small = t[ia]
         self.grid_ia_r = r_small
         self.grid_ia_t = t_small
-        # for use in NUFFT interpolation
+        wh = np.where(ia)
+        self.grid_ia_xind = wh[0]
+        self.grid_ia_yind = wh[1]
+
+        # compute heaviside cutoff function
+        lb = -self.heaviside_width if self.interior else self.heaviside_width
+        grts = affine_transformation(self.grid_ia_r, lb, 0, -1, 1, use_numexpr=True)
+        self.grid_to_radial_step = 1.0 - self.heaviside.step(grts)
+        arts = affine_transformation(self.radial_rv, lb, 0, -1, 1, use_numexpr=True)
+        self.radial_cutoff = self.heaviside.step(arts)
+
+        # transform for NUFFTs
         self.grid_ia_r_transf = self.nufft_transform_r(self.grid_ia_r)
         self.interface_x_transf = affine_transformation(self.interface.x, self.grid.x_bounds[0], self.grid.x_bounds[1], 0.0, 2*np.pi, use_numexpr=True)
         self.interface_y_transf = affine_transformation(self.interface.y, self.grid.y_bounds[0], self.grid.y_bounds[1], 0.0, 2*np.pi, use_numexpr=True)
 
-        ########################################################################
-        # Compute regularized Heaviside functions for coupling grids
-
-        if not self.have_heavisides:
-            lb = -self.heaviside_width if self.interior else self.heaviside_width
-            grts = affine_transformation(self.grid_ia_r, lb, 0, -1, 1, use_numexpr=True)
-            self.grid_to_radial_step = 1.0 - self.heaviside(grts)
-            arts = affine_transformation(self.radial_rv, lb, 0, -1, 1, use_numexpr=True)
-            self.radial_cutoff = self.heaviside(arts)
-            # add these to kwargs for saving
-            self.kwargs['grid_to_radial_step'] = self.grid_to_radial_step
-            self.kwargs['radial_cutoff'] = self.radial_cutoff
-
-        # get indeces for everything in danger zone
-        if danger_zone_distance is not None:
-            # actually in danger zone
-            # should these only those on the phys side or any?  I think any...
-            # idz = np.logical_and(r <= ddd, r >= -self.radial_width-ddd) if self.interior \
-                        # else np.logical_and(r >= -ddd, r <= self.radial_width+ddd)
-            idz = np.logical_and(r <= ddd, r >= -self.radial_width-ddd) if self.interior \
-                        else np.logical_and(r >= -ddd, r <= self.radial_width+ddd)
-            # reduce to the good ones
-            iax_small = iax[idz]
-            iay_small = iay[idz]
-            r_small   = r  [idz]
-            t_small   = t  [idz]
-            self.grid_in_danger_zone_x = iax_small
-            self.grid_in_danger_zone_y = iay_small
-            # get guess indeces for this
-            gi = (t_small//self.bdy.dt).astype(int)
-            self.grid_in_danger_zone_gi = gi
-
-            # get correct vector needed
-            # rr = np.ones(np.prod(self.radial_shape), dtype=bool)
-            # self.in_danger_zone = np.concatenate([in_danger_zone[phys_na], rr])
-            # self.guess_inds = np.concatenate([gi[phys_na], self.near_radial_guess_inds.ravel()])
-
     ############################################################################
     # Functions relating to the radial grid
-
-    def register_ia_inds(self, phys_inds):
-        """
-        Get in_annulus indeces into physical only array
-        """
-        self.ia_inds = phys_inds[self.grid_ia_xind, self.grid_ia_yind]
 
     def _generate_radial_grid(self):
         bdy = self.bdy
@@ -335,10 +301,8 @@ class EmbeddedBoundary(object):
             self.chebyshev_interp_f_to_bdy = np.polynomial.chebyshev.chebvander(1, self.M-1).dot(VI0)[0]
             self.chebyshev_interp_f_to_interface = np.polynomial.chebyshev.chebvander(-1, self.M-1).dot(VI0)[0]
         else:
-            # w = np.polynomial.chebyshev.chebvander(-1, self.M-1).dot(VI0)[0]
             self.chebyshev_interp_f_to_bdy = np.polynomial.chebyshev.chebvander(-1, self.M-1).dot(VI0)[0]
             self.chebyshev_interp_f_to_interface = np.polynomial.chebyshev.chebvander(1, self.M-1).dot(VI0)[0]
-        # self.chebyshev_interp_f_to_bdy = w
         # chebyshev interpolation of normal  derivative->bdy matrix
         self.chebyshev_interp_df_dn_to_bdy = self.chebyshev_interp_f_to_bdy.dot(self.D00)
         self.chebyshev_interp_df_dn2_to_bdy = self.chebyshev_interp_f_to_bdy.dot(self.D00.dot(self.D00))
@@ -357,41 +321,10 @@ class EmbeddedBoundary(object):
         _, w = fejer_1(self.M)
         self.radial_quadrature_weights = self.bdy.dt*w[:,None]*self.radial_width/2.0*self.radial_speed
 
-    def check_if_r_in_annulus(self, r):
-        """
-        checks if r is in the annulus or not
-        Inputs:
-            r, float(*): radii to check
-        Returns:
-            in_annulus, bool(*): whether corresponding r is in the annulus
-            pna,        bool(*): physical, not in annulus
-            ext,        bool(*): exterior, not in annulus
-        """
-        if self.interior:
-            w1 = r <= 0
-            w2 = r >= -self.radial_width
-            ia = np.logical_and(w1, w2)
-            pna = np.logical_not(w2)
-            ext = np.logical_not(w1)
-            return ia, pna, ext
-        else:
-            w1 = r >= 0
-            w2 = r <= self.radial_width
-            ia = np.logical_and(w1, w2)
-            pna = np.logical_not(w2)
-            ext = np.logical_not(w1)
-            return ia, pna, ext
-
     def nufft_transform_r(self, r):
         lb = -self.radial_width if self.interior else 0.0
         ub = 0.0 if self.interior else self.radial_width
         return np.arccos(affine_transformation(r, lb, ub, 1.0, -1.0, use_numexpr=True))
-
-    def fix_r(self, r):
-        if self.interior:
-            r[r > 0.0] = 0.0
-        else:
-            r[r < 0.0] = 0.0
 
     ############################################################################
     # Functions for communicating between radial grid and boundary
@@ -421,15 +354,17 @@ class EmbeddedBoundary(object):
         Interpolate the radial function fr defined on this annulus to points
         with coordinates (r, t) given by transf_r, t
         """
+
+        # should i define a 2D NUFFT Interpolater using the plan functions?
+        # this might be useful if this is interpolated over and over again...
+        # will think about
+
         self.interpolation_hold[:self.M,:] = fr
         self.interpolation_hold[self.M:,:] = fr[::-1]
         funch = np.fft.fft2(self.interpolation_hold)*self.interpolation_modifier
         funch[self.M] = 0.0
         out = np.empty(t.size, dtype=complex)
-        if old_nufft:
-            diagnostic = finufftpy.nufft2d2(transf_r, t, out, 1, 1e-14, funch, modeord=1)
-        else:
-            diagnostic = finufft.nufft2d2(transf_r, t, funch, out, isign=1, eps=1e-14, modeord=1)
+        diagnostic = finufft.nufft2d2(transf_r, t, funch, out, isign=1, eps=1e-14, modeord=1)
         vals = out.real/np.prod(funch.shape)
         return vals
     def interpolate_radial_to_grid1(self, fr, f):
@@ -441,37 +376,15 @@ class EmbeddedBoundary(object):
         """
         vals = self.interpolate_radial_to_points(fr, self.grid_ia_r_transf, self.grid_ia_t)
         f[self.grid_ia_xind, self.grid_ia_yind] = vals
-    def interpolate_radial_to_grid2(self, fr, f):
-        """
-        Interpolate the function fr onto f in the part of the grid underlying
-        This particular embedded boundary
+    # def interpolate_radial_to_grid2(self, fr, f):
+    #     """
+    #     Interpolate the function fr onto f in the part of the grid underlying
+    #     This particular embedded boundary
 
-        f here is only the physical portion of the grid values of f
-        """
-        vals = self.interpolate_radial_to_points(fr, self.grid_ia_r_transf, self.grid_ia_t)
-        f[self.ia_inds] = vals
-
-    ############################################################################
-    # FUNCTIONS FOR MERGING (EXPERIMENTAL AND NOT USED)
-    # SAVE THIS HERE FOR NOW, BUT WILL REQUIRE EBDY_COLLECTION INTERFACES
-    # IF IT IS ACTUALLY GOING TO BE USED
-    def full_merge(self, f, fr, order=5):
-        f1 = f*self.grid_step
-        f2 = f*0.0
-        self.interpolate_radial_to_grid(fr, f2)
-        f2 = f2*(1-self.grid_step)
-        gia = self.grid_in_annulus
-        f[gia] = f1[gia] + f2[gia]
-        fr1 = fr*self.radial_cutoff[:,None]
-        fr2 = self.interpolate_grid_to_radial(f*self.grid_step, order)
-        fr[:] = fr1 + fr2
-    def merge_grids(self, f, fr):
-        f1 = f*self.grid_step
-        f2 = f*0.0
-        self.interpolate_radial_to_grid(fr, f2)
-        f2 = f2*(1-self.grid_step)
-        gia = self.grid_in_annulus
-        f[gia] = f1[gia] + f2[gia]
+    #     f here is only the physical portion of the grid values of f
+    #     """
+    #     vals = self.interpolate_radial_to_points(fr, self.grid_ia_r_transf, self.grid_ia_t)
+    #     f[self.ia_inds] = vals
 
     ############################################################################
     # Functions for taking derivatives on the radial grid
@@ -528,27 +441,6 @@ class EmbeddedBoundary(object):
         fu = fr*bdy.normal_x + ft*bdy.tangent_x
         fv = fr*bdy.normal_y + ft*bdy.tangent_y
         return fu, fv
-
-    ############################################################################
-    # Construct the QFS boundaries for both the boundary and the interface
-    def _generate_qfs_boundaries(self):
-        eps  = self.qfs_tolerance
-        fsuf = self.qfs_fsuf
-        FF = self.qfs_FF
-        self.bdy_qfs = QFS_Boundary(self.bdy, eps=eps, forced_source_upsampling_factor=fsuf, FF=FF, modes=2)
-        self.interface_qfs = QFS_Boundary(self.interface, eps=eps, forced_source_upsampling_factor=fsuf, FF=FF, modes=2)
-        # collect interface relevant sources
-        q = self.interface_qfs
-        # these are sources for evaluating from interface out of the annulus
-        self.interface_grid_source = q.interior_source_bdy if self.interior else q.exterior_source_bdy
-        # these are sources for evaluating from interface into the annulus
-        self.interface_radial_source = q.exterior_source_bdy if self.interior else q.interior_source_bdy
-        # collect boundary relevant sources
-        q = self.bdy_qfs
-        # these are sources for evaluating from boundary into the exterior region
-        self.bdy_outward_source = q.exterior_source_bdy if self.interior else q.interior_source_bdy
-        # these are sources for evaluating from boundary into the physical region
-        self.bdy_inward_source = q.interior_source_bdy if self.interior else q.exterior_source_bdy
 
     ############################################################################
     # Functions for integrating

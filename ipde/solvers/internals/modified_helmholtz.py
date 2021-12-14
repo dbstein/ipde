@@ -10,9 +10,8 @@ class ModifiedHelmholtzHelper(ScalarHelper):
     Inhomogeneous Modified-Helmholtz Solver on general domain
     """
     def __init__(self, ebdy, annular_solver=None, k=1.0):
-        super().__init__(ebdy, annular_solver, k=k)
-    def _extract_extra_kwargs(self, k=None):
         self.k = k
+        super().__init__(ebdy, annular_solver)
     def _define_annular_solver(self):
         self.annular_solver = AnnularModifiedHelmholtzSolver(self.AAG, k=self.k)
     def _get_qfs(self):

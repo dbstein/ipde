@@ -2,6 +2,12 @@ import numpy as np
 import numexpr as ne
 from scipy.linalg.lapack import zgetrs
 
+try:
+    from mkl_fft import fft, ifft
+except:
+    fft = np.fft.fft
+    ifft = np.fft.ifft
+
 def concat(*args):
     return np.concatenate([ np.array(arg).ravel() for arg in args ])
 
@@ -71,7 +77,7 @@ def mfft(f):
     N = f.shape[1]
     NS = N - 1
     N2 = int(N/2)
-    fh = np.fft.fft(f)
+    fh = fft(f)
     temp = np.empty((M, NS), dtype=complex)
     temp[:,:N2] = fh[:,:N2]
     temp[:,N2:] = fh[:,N2+1:]
@@ -85,7 +91,7 @@ def mifft(fh):
     temp[:,:N2]   = fh[:,:N2]
     temp[:,N2]    = 0.0
     temp[:,N2+1:] = fh[:,N2:]
-    return np.fft.ifft(temp)
+    return ifft(temp)
 def fourier_multiply(fh, m):
     return mfft(m*mifft(fh))
 

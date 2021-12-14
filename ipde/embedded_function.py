@@ -1,7 +1,7 @@
 import numpy as np
 import pybie2d
 import weakref
-from ipde.embedded_boundary import EmbeddedBoundary
+from ipde.embedded_boundary_tr import EmbeddedBoundary
 
 def LoadEmbeddedFunction(d, ebdyc=None):
     from ipde.ebdy_collection import LoadEmbeddedBoundaryCollection
@@ -148,7 +148,10 @@ class EmbeddedFunction(np.ndarray):
         gv = np.ma.array(gv_raw, mask=ebdyc.ext)
         vmin = self.min()
         vmax = self.max()
-        if 'vmin' not in kwargs:
+        if 'norm' in kwargs and 'vmin' not in kwargs:
+            kwargs['norm'].vmin = vmin
+            kwargs['norm'].vmax = vmax
+        elif 'vmin' not in kwargs:
             kwargs['vmin'] = vmin
             kwargs['vmax'] = vmax
         clf = ax.pcolormesh(xv-0.5*xh, yv-0.5*yh, gv, **kwargs)
@@ -301,8 +304,15 @@ class BoundaryFunction(np.ndarray):
     def __repr__(self):
         return self.__str__()
 
+    # def copy(self):
+    #     ebdyc = self._ebdyc_test()
+    #     return BoundaryFunction(ebdyc, data=self.asarray().copy())
+
     def copy(self):
-        return BoundaryFunction(self.ebdyc, data=self.asarray().copy())
+        ebdyc = self._ebdyc_test()
+        copy = BoundaryFunction(ebdyc, self.dtype)
+        super(BoundaryFunction, copy).__setitem__(slice(None, None), self)
+        return copy
 
     def asarray(self):
         return np.array(self)

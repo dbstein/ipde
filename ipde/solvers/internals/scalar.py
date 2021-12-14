@@ -5,25 +5,20 @@ class ScalarHelper(object):
     """
     General class for scalar solvers
     """
-    def __init__(self, ebdy, annular_solver=None, **kwargs):
-        """
-        Type can either be 'spectral' or 'fourth'
-        """
+    def __init__(self, ebdy, helper=None, grid_backend='pybie2d'):
         self.ebdy = ebdy
+        self.grid_backend = grid_backend
         self.interior = self.ebdy.interior
-        self._extract_extra_kwargs(**kwargs)
-        if annular_solver is None:
+        if helper is None:
             self.AAG = ApproximateAnnularGeometry(self.ebdy.bdy.N, self.ebdy.M,
                 self.ebdy.radial_width, self.ebdy.approximate_radius)
             self._define_annular_solver()
         else:
-            self.annular_solver = annular_solver
+            self.annular_solver = helper.annular_solver
         self._set_boundary_estimators()
         self._get_RAG()
         self._get_qfs()
         self._define_layer_apply()
-    def _extract_extra_kwargs(self, **kwargs):
-        pass
     def _get_geometry(self):
         raise NotImplementedError
     def _define_annular_solver(self):

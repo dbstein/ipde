@@ -26,7 +26,8 @@ class StokesHelper(VectorHelper):
         def Layer_Apply(src, trg, f):
             s = src.get_stacked_boundary()
             t = trg.get_stacked_boundary()
-            out = SFMM(source=s, target=t, forces=f*src.weights, compute_target_velocity=True, compute_target_stress=True)
+            out = SFMM(source=s, target=t, forces=f*src.weights, \
+                compute_target_velocity=True, compute_target_stress=True)
             u = out['target']['u']
             v = out['target']['v']
             p = out['target']['p']

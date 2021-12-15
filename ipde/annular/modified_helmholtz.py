@@ -65,12 +65,11 @@ def optim_batch_matvecT_ser(A, x, out):
             for k in range(A.shape[2]):
                 kaccum += A[i, j, k] * x[i+k*A.shape[0]]
             out[i+j*A.shape[0]] = kaccum
-@numba.njit
 def optim_batch_matvecT(A, x, out):
     if A.shape[0]*A.shape[1] > 10000:
-        return optim_batch_matvecT_par(A, x, out)
+        optim_batch_matvecT_par(A, x, out)
     else:
-        return optim_batch_matvecT_ser(A, x, out)
+        optim_batch_matvecT_ser(A, x, out)
 
 class AnnularModifiedHelmholtzSolver(object):
     """

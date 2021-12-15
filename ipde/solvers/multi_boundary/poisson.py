@@ -3,6 +3,7 @@ from ipde.solvers.multi_boundary.scalar import ScalarSolver
 from ipde.solvers.internals.poisson import PoissonHelper
 from ipde.utilities import affine_transformation
 from ipde.grid_evaluators.laplace_grid_evaluator import LaplaceFreespaceGridEvaluator, LaplaceGridBackend
+from ipde.utilities import fft2, ifft2
 
 try:
     from flexmm.flexmm2d.kifmm import KI_FMM
@@ -28,8 +29,8 @@ class PoissonSolver(ScalarSolver):
         return PoissonHelper(ebdy, helper)
     def _grid_solve(self, fc):
         fc = self.ebdyc.demean_function(fc)
-        uch = np.fft.fft2(fc)*self.ilap
-        return uch, np.fft.ifft2(uch).real
+        uch = fft2(fc)*self.ilap
+        return uch, ifft2(uch).real
     def _get_specific_operators(self):
         self.lap = -self.kx*self.kx - self.ky*self.ky
         self.lap[0,0] = np.Inf

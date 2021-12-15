@@ -4,9 +4,12 @@ from scipy.linalg.lapack import zgetrs
 
 try:
     from mkl_fft import fft, ifft
+    from mkl_fft import fft2, ifft2
 except:
     fft = np.fft.fft
     ifft = np.fft.ifft
+    fft2 = np.fft.fft2
+    ifft2 = np.fft.ifft2
 
 def concat(*args):
     return np.concatenate([ np.array(arg).ravel() for arg in args ])

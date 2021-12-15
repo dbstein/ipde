@@ -1,5 +1,6 @@
 import numpy as np
-from ...annular.annular import ApproximateAnnularGeometry, RealAnnularGeometry
+# from ...annular.annular import ApproximateAnnularGeometry, RealAnnularGeometry
+from ...annular.annular_full import ApproximateAnnularGeometry, RealAnnularGeometry
 
 class ScalarHelper(object):
     """

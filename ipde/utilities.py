@@ -98,6 +98,9 @@ def mifft(fh):
 def fourier_multiply(fh, m):
     return mfft(m*mifft(fh))
 
+def ffourier_multiply(fh, m):
+    return fft(m*ifft(fh))
+
 class SimpleFourierFilter(object):
     """
     Class to apply simple Fourier Filtration to a vector

@@ -64,10 +64,10 @@ class ApproximateAnnularGeometry(object):
         self.width = width
         self.radial_h = self.width/self.M
         self.tangent_h = 2*np.pi/n
-        self.ns = self.n - 1
+        self.ns = self.n
         self.n2 = int(self.n/2)
         self.k = np.fft.fftfreq(self.n, 1.0/self.n)
-        self.ks = concat(self.k[:self.n2], self.k[self.n2+1:])
+        self.ks = self.k
         self.iks = 1j*self.ks
         # r grids
         _, self.rv0, rat0 = get_chebyshev_nodes(-self.width, 0.0, self.M-0)

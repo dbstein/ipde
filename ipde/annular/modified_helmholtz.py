@@ -1,5 +1,5 @@
 import numpy as np
-from ipde.utilities import fast_dot, concat, fast_LU_solve, mfft, mifft, fourier_multiply
+from ipde.utilities import fast_dot, concat, fast_LU_solve, mfft, mifft, fourier_multiply, fft, ifft, ffourier_multiply
 import scipy as sp
 import scipy.linalg
 from personal_utilities.scipy_gmres import right_gmres, gmres
@@ -21,6 +21,22 @@ def scalar_laplacian(CO, AAG, RAG, uh):
     uh_rr = D12.dot(fourier_multiply(D01.dot(uh), psi1))
     luh = fourier_multiply(uh_rr+uh_tt, ipsi2)
     return luh
+
+def fscalar_laplacian(CO, AAG, RAG, uh):
+    R01 = CO.R01
+    R12 = CO.R12
+    D01 = CO.D01
+    D12 = CO.D12
+    iks = AAG.iks
+    psi1 = RAG.psi1
+    ipsi1 = RAG.inv_psi1
+    ipsi2 = RAG.inv_psi2
+    uh_t = R01.dot(uh*iks)
+    uh_tt = R12.dot(ffourier_multiply(uh_t, ipsi1)*iks)
+    uh_rr = D12.dot(ffourier_multiply(D01.dot(uh), psi1))
+    luh = ffourier_multiply(uh_rr+uh_tt, ipsi2)
+    return luh
+
 
 # custom numba function for preconditioner
 # basically a batched matvec; but note the ordering for the input vector
@@ -163,7 +179,7 @@ class AnnularModifiedHelmholtzSolver(object):
         obcn = CO.obc_neumann
         R02  = CO.R02
         uh = uh.reshape(self.small_shape)
-        luh = scalar_laplacian(CO, AAG, RAG, uh)
+        luh = fscalar_laplacian(CO, AAG, RAG, uh)
         fuh = self.k**2*R02.dot(uh) - luh
         ibc = (self.ia*ibcd + self.ib*ibcn).dot(uh)
         obc = (self.oa*obcd + self.ob*obcn).dot(uh)
@@ -177,10 +193,11 @@ class AnnularModifiedHelmholtzSolver(object):
         self.ob = ob if ob is not None else self.ob
         R02 = self.AAG.CO.R02
         ff = concat(R02.dot(f), ig, og)
-        ffh = mfft(ff.reshape(self.shape)).ravel()
+        # ffh = mfft(ff.reshape(self.shape)).ravel()
+        ffh = fft(ff.reshape(self.shape)).ravel()
         out = right_gmres(self.APPLY, ffh, M=self.PREC, verbose=verbose, **kwargs)
         res = out[0]
         if verbose:
             print('GMRES took:', len(out[2]), 'iterations.')
         self.iterations_last_call = len(out[2])
-        return mifft(res.reshape(self.small_shape)).real
+        return ifft(res.reshape(self.small_shape)).real

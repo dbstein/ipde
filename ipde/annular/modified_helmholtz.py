@@ -49,6 +49,29 @@ def batch_matvecT(A, x):
     else:
         return batch_matvecT_ser(A, x)
 
+@numba.njit(parallel=True, fastmath=True)
+def optim_batch_matvecT_par(A, x, out):
+    for i in numba.prange(A.shape[0]):
+        for j in range(A.shape[1]):
+            kaccum = 0.0
+            for k in range(A.shape[2]):
+                kaccum += A[i, j, k] * x[i+k*A.shape[0]]
+            out[i+j*A.shape[0]] = kaccum
+@numba.njit(parallel=False, fastmath=True)
+def optim_batch_matvecT_ser(A, x, out):
+    for i in numba.prange(A.shape[0]):
+        for j in range(A.shape[1]):
+            kaccum = 0.0
+            for k in range(A.shape[2]):
+                kaccum += A[i, j, k] * x[i+k*A.shape[0]]
+            out[i+j*A.shape[0]] = kaccum
+@numba.njit
+def optim_batch_matvecT(A, x, out):
+    if A.shape[0]*A.shape[1] > 10000:
+        return optim_batch_matvecT_par(A, x, out)
+    else:
+        return optim_batch_matvecT_ser(A, x, out)
+
 class AnnularModifiedHelmholtzSolver(object):
     """
     Spectrally accurate Modified Helmholtz solver on annular domain
@@ -81,7 +104,7 @@ class AnnularModifiedHelmholtzSolver(object):
         self.shape = (self.M, self.n)
         self._construct()
         self.APPLY = scipy.sparse.linalg.LinearOperator((self.NB, self.NB), dtype=complex, matvec=self._apply)
-        self.PREC = scipy.sparse.linalg.LinearOperator((self.NB, self.NB), dtype=complex, matvec=self._preconditioner)
+        self.PREC = scipy.sparse.linalg.LinearOperator((self.NB, self.NB), dtype=complex, matvec=self._optim_preconditioner)
     def _construct(self):
         AAG = self.AAG
         CO = AAG.CO
@@ -113,8 +136,12 @@ class AnnularModifiedHelmholtzSolver(object):
             self._KINVS.append(sp.linalg.inv(K.real))
         self.KINV = sp.sparse.block_diag(self._KINVS, 'csr').astype('complex') # for SpMV preconditioner
         self.Stacked_KINVS = np.stack(self._KINVS).copy()
+        self.prealloc = np.zeros(self.M*self.ns, dtype=complex)
     def _preconditioner(self, fh):
         return batch_matvecT(self.Stacked_KINVS, fh.reshape(self.small_shape)).ravel('F')
+    def _optim_preconditioner(self, fh):
+        optim_batch_matvecT(self.Stacked_KINVS, fh, self.prealloc)
+        return self.prealloc
     def _SpMV_preconditioner(self, fh):
         # could avoid these reshapes if self.KINV constructed differently
         # however, they don't seem to take a huge amount of time

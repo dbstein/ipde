@@ -82,7 +82,7 @@ class ScalarSolver(object):
             # get derivatives in Fourier space
             ucxh, ucyh = self.ikx*uch, self.iky*uch
             uch_stack = np.stack([uch, ucxh, ucyh])
-            interpolater = periodic_interp2d(fh=uch_stack, eps=1e-14)
+            interpolater = periodic_interp2d(fh=uch_stack, eps=1e-14, upsampfac=1.25)
             all_bvs = interpolater(self.ebdyc.interfaces_x_transf, self.ebdyc.interfaces_y_transf)
             bvs = all_bvs[0].real
             bxs = all_bvs[1].real

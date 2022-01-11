@@ -88,6 +88,7 @@ class ScalarHelper(object):
         sigma_r = self.interface_qfs_r([slp, dlp])
         # save ur, sigma_r, sigma_g in an internal state
         self.ur = ur
+        self.ur_save = self.ur.copy() # for plotting purposes
         self.sigma_r = sigma_r
         self.sigma_g = sigma_g
         # we now report back to master

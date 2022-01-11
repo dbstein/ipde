@@ -109,6 +109,7 @@ class EmbeddedBoundary(object):
         self.smoothing_factor     = setit('smoothing_factor',     kwargs, None)
         self.extra_coordinate_distance = setit('extra_coordinate_distance', kwargs, 0.0)
         self.coordinate_kwargs    = setit('coordinate_kwargs',    kwargs, {})
+        self.slepian_r            = setit('slepian_r',            kwargs, {})
 
         # parameters that depend on other parameters
         self.radial_width = self.M*self.h
@@ -118,7 +119,11 @@ class EmbeddedBoundary(object):
         if 'heaviside' in kwargs:
             self.heaviside = heaviside
         else:
-            self.heaviside = SlepianMollifier(2*self.M)
+            if 'slepian_r' in kwargs:
+                slepian_r = kwargs['slepian_r']
+            else:
+                slepian_r = 2*self.M
+            self.heaviside = SlepianMollifier(slepian_r)
 
         # smooth the boundary, if requested
         if self.smoothing_factor is not None:

@@ -77,6 +77,7 @@ class ScalarSolver(object):
         _, fc, fr_list = f.get_components()
         # get the grid-based solution
         uch, uc = self._grid_solve(fc)
+        self.uc_save = uc.copy() # only for plotting!  can be turned off for speed
         # get interpolate method
         if self.interpolation_order == np.Inf:
             # get derivatives in Fourier space

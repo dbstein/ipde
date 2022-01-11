@@ -209,8 +209,8 @@ class EmbeddedBoundaryCollection(object):
         # cheater space around the outside (buffer zone to make things easier)
         cheat_space = iebdy.radial_width
         # approximate bounds (see if we can make these smaller!)
-        xmin = ibdy.x.min() - cheat_space
-        ymin = ibdy.y.min() - cheat_space
+        xmin = ibdy.x.min()# - cheat_space
+        ymin = ibdy.y.min()# - cheat_space
         xmax = ibdy.x.max() + 2*cheat_space # this is so we have room for bumpy...
         ymax = ibdy.y.max() + 2*cheat_space # this is so we have room for bumpy...
         self.bump_location = [ibdy.x.max()+cheat_space, ibdy.y.max()+cheat_space]
@@ -244,7 +244,7 @@ class EmbeddedBoundaryCollection(object):
         assert np.abs(grid.xh - h) < 1e-15, 'Gridspacing not what was requested'
         assert np.abs(grid.yh - h) < 1e-15, 'Gridspacing not what was requested'
         # register this grid
-        self.register_grid(grid, extra_coordinate_distance=extra_coordinate_distance)
+        self.register_grid(grid)#, extra_coordinate_distance=extra_coordinate_distance)
         # flag that the bumpy hasn't been constructed
         if self.bumpy_readied:
             self.bumpy_readied = False
@@ -274,15 +274,26 @@ class EmbeddedBoundaryCollection(object):
             ebdy.register_grid(grid)
 
         # now get the physical region
-        phys = np.zeros(grid.shape, dtype=bool) if self.ebdys[0].interior \
-                    else np.ones(grid.shape, dtype=bool)
+        ext = np.ones(grid.shape, dtype=bool) if self.ebdys[0].interior \
+                else np.zeros(grid.shape, dtype=bool)
         for ebdy in self:
             if ebdy.interior:
-                phys = np.logical_or(phys, ebdy.grid_interior)
+                ext = np.logical_and(ext, ebdy.grid_exterior)
             else:
-                phys = np.logical_or(phys, ebdy.grid_exterior)
-        self.phys = phys
-        self.ext = np.logical_not(self.phys)
+                ext = np.logical_or(ext, ebdy.grid_interior)
+        self.ext = ext
+        self.phys = np.logical_not(self.ext)
+
+        # phys = np.zeros(grid.shape, dtype=bool) if self.ebdys[0].interior \
+        #             else np.ones(grid.shape, dtype=bool)
+        # for ebdy in self:
+        #     if ebdy.interior:
+        #         phys = np.logical_or(phys, ebdy.grid_interior)
+        #     else:
+        #         phys = np.logical_or(phys, ebdy.grid_exterior)
+        # self.phys = phys
+        # self.ext = np.logical_not(self.phys)
+
         self.phys_inds = np.zeros(grid.shape, dtype=int)
         self.phys_n = np.sum(self.phys)
         self.phys_inds[self.phys] = np.arange(self.phys_n)
@@ -497,6 +508,8 @@ class EmbeddedBoundaryCollection(object):
         lbds = [self.grid.x_bounds[0], self.grid.y_bounds[0]]
         ubds = [self.grid.x_bounds[1], self.grid.y_bounds[1]]
         hs =   [self.grid.xh, self.grid.yh]
+        if type(f) == EmbeddedFunction:
+            f = f.get_grid_value()
         interp = fast_interp.interp2d(lbds, ubds, hs, f, k=order, p=[True, True])
         radial_list = []
         for ebdy in self:

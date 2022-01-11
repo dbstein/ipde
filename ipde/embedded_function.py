@@ -145,7 +145,11 @@ class EmbeddedFunction(np.ndarray):
         yh = grid.yh
         gv_raw = np.empty(grid.shape)
         gv_raw[ebdyc.phys] = self['grid']
-        gv = np.ma.array(gv_raw, mask=ebdyc.ext)
+        # mask out those who are close to boundary for nice plotting
+        better_mask = ebdyc.ext.copy()
+        for ebdy in ebdyc:
+            better_mask[ebdy.grid_ia_xind, ebdy.grid_ia_yind] = np.abs(ebdy.grid_ia_r) < 0.5*np.abs(ebdy.radial_width)
+        gv = np.ma.array(gv_raw, mask=better_mask)
         vmin = self.min()
         vmax = self.max()
         if 'norm' in kwargs and 'vmin' not in kwargs:
@@ -155,11 +159,28 @@ class EmbeddedFunction(np.ndarray):
             kwargs['vmin'] = vmin
             kwargs['vmax'] = vmax
         clf = ax.pcolormesh(xv-0.5*xh, yv-0.5*yh, gv, **kwargs)
+        clf.set_edgecolor('face')
         for ebdy, fr in zip(ebdyc, self):
             x = ebdy.plot_radial_x
             y = ebdy.plot_radial_y
             ax.pcolormesh(x, y, fr, **kwargs)
         return clf
+    def plot_radial(self, ax, **kwargs):
+        ebdyc = self._ebdyc_test()
+        vmin = self.min()
+        vmax = self.max()
+        if 'norm' in kwargs and 'vmin' not in kwargs:
+            kwargs['norm'].vmin = vmin
+            kwargs['norm'].vmax = vmax
+        elif 'vmin' not in kwargs:
+            kwargs['vmin'] = vmin
+            kwargs['vmax'] = vmax
+        # currently only gives clf relating to 1st boundary, this is wrong!
+        for ebdy, fr in zip(ebdyc, self):
+            x = ebdy.plot_radial_x
+            y = ebdy.plot_radial_y
+            clf = ax.pcolormesh(x, y, fr, **kwargs)
+        return clf        
     def get_grid_value(self, masked=False):
         ebdyc = self._ebdyc_test()
         arr = np.zeros(ebdyc.grid.shape, dtype=self.dtype)

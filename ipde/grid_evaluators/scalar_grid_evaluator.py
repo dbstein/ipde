@@ -31,7 +31,7 @@ def excisor(r, r1, r2, MOL):
         out[r<r1] = 1.0
         out[r>r2] = 0.0
         rh = r[other]
-        out[other] = MOL.step(1-(rh - r1)/(r2-r1)*2)
+        out[other] = MOL.step(1.0-(rh - r1)/(r2-r1)*2)
         return out
     except:
         if r < r1:
@@ -39,7 +39,7 @@ def excisor(r, r1, r2, MOL):
         if r > r2:
             return 0.0
         else:
-            return MOL.step(1-(r - r1)/(r2-r1)*2)
+            return MOL.step(np.array(1.0-(r - r1)/(r2-r1)*2))
 def gf_apply(gf, sx, sy, tx, ty, ch):
     dx = tx[:,None] - sx
     dy = ty[:,None] - sy

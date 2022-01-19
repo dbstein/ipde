@@ -3,6 +3,8 @@ from .scalar import ScalarSolver
 from ..internals.modified_helmholtz import ModifiedHelmholtzHelper
 from ipde.grid_evaluators.modified_helmholtz_grid_evaluator import ModifiedHelmholtzFreespaceGridEvaluator, ModifiedHelmholtzGridBackend
 
+from ipde.utilities import fft2, ifft2
+
 class ModifiedHelmholtzSolver(ScalarSolver):
     def __init__(self, ebdyc, k, solver_type='spectral', helpers=None, grid_backend='pybie2d'):
         self.k = k
@@ -33,7 +35,8 @@ class ModifiedHelmholtzSolver(ScalarSolver):
             return helper
         raise Exception('Helper compatibility returned unimplemented value.')
     def _grid_solve(self, fc):
-        return np.fft.ifft2(np.fft.fft2(fc)*self.ihelm).real
+        uch = fft2(fc)*self.ihelm
+        return uch, ifft2(uch).real
     def _get_specific_operators(self):
         self.lap = -self.kx*self.kx - self.ky*self.ky
         self.helm = self.k**2 - self.lap

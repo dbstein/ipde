@@ -20,6 +20,12 @@ class PoissonHelper(ScalarHelper):
         self.interface_qfs_r = Laplace_QFS(self.ebdy.interface, 
                                         not self.interior, True, True)
     def _define_layer_apply(self):
-        def func(src, trg, ch):        
-            return Laplace_Layer_Apply(src, trg, charge=ch, backend='fly')
+        if self.grid_backend == 'fmm2d':
+            def func(src, trg, ch):
+                sca = -0.5/np.pi
+                out = fmm2dpy.rfmm2d(eps=1e-14, sources=src.get_stacked_boundary(), charges=sca*ch*src.weights, targets=trg.get_stacked_boundary(), pgt=1)
+                return out.pottarg
+        else:
+            def func(src, trg, ch):        
+                return Laplace_Layer_Apply(src, trg, charge=ch, backend='fly')
         self.Layer_Apply = func

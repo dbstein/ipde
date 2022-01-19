@@ -4,14 +4,19 @@ from qfs.laplace_qfs import Laplace_QFS
 from ipde.solvers.internals.scalar import ScalarHelper
 from ipde.annular.poisson import AnnularPoissonSolver
 
+try:
+    import fmm2dpy
+except:
+    pass
+
 Laplace_Layer_Apply = pybie2d.kernels.high_level.laplace.Laplace_Layer_Apply
 
 class PoissonHelper(ScalarHelper):
     """
     Inhomogeneous Poisson Solver on general domain
     """
-    def __init__(self, ebdy, annular_solver=None):
-        super().__init__(ebdy, annular_solver)
+    def __init__(self, ebdy, annular_solver=None, grid_backend='pybie2d'):
+        super().__init__(ebdy, annular_solver, grid_backend)
     def _define_annular_solver(self):
         self.annular_solver = AnnularPoissonSolver(self.AAG)
     def _get_qfs(self):

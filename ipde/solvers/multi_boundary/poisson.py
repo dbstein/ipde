@@ -26,7 +26,7 @@ class PoissonSolver(ScalarSolver):
             # raise Exception('Laplace solver requires embedded boundary collection with a bump function.')
         super().__init__(ebdyc, solver_type, AS_list, grid_backend)
     def _get_helper(self, ebdy, helper):
-        return PoissonHelper(ebdy, helper)
+        return PoissonHelper(ebdy, helper, grid_backend=self.grid_backend)
     def _grid_solve(self, fc):
         fc = self.ebdyc.demean_function(fc)
         self._fc_save = fc.copy() # for plotting only!

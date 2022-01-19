@@ -9,7 +9,6 @@ class ScalarSolver(object):
         self.ebdyc = ebdyc
         self.solver_type = solver_type
         self.grid_backend = grid_backend
-        self.grid_backend = grid_backend
         if helpers is None: helpers = [None,]*self.ebdyc.N
         self.helpers = []
         for ebdy, helper in zip(self.ebdyc, helpers):

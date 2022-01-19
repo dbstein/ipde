@@ -55,7 +55,7 @@ class PoissonSolver(ScalarSolver):
                 return self.FMM.target_evaluation(targ.x, targ.y)
             self.Grid_Evaluator = evaluator
             self.split_grid_evaluation = False
-        elif self.grid_backend == 'pybie2d':
+        elif self.grid_backend == 'pybie2d' or 'fmm2d':
             self.split_grid_evaluation = False
             def evaluator(ch):
                 return self.Layer_Apply(self.grid_sources, self.ebdyc.grid_pnai, ch)

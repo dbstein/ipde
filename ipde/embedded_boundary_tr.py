@@ -452,3 +452,34 @@ class EmbeddedBoundary(object):
     def radial_integral(self, fr):
         return np.sum(fr*self.radial_cutoff[:,None]*self.radial_quadrature_weights)
 
+    ############################################################################
+    # FUNCTIONS TO BE ELIMINATED!!!!!
+    # Still here for compatiblity reasons
+
+    # to be dispensed with!!!!
+    def check_if_r_in_annulus(self, r):
+        """
+        checks if r is in the annulus or not
+        Inputs:
+            r, float(*): radii to check
+        Returns:
+            in_annulus, bool(*): whether corresponding r is in the annulus
+            pna,        bool(*): physical, not in annulus
+            ext,        bool(*): exterior, not in annulus
+        """
+        if self.interior:
+            w1 = r <= 0
+            w2 = r >= -self.radial_width
+            ia = np.logical_and(w1, w2)
+            pna = np.logical_not(w2)
+            ext = np.logical_not(w1)
+            return ia, pna, ext
+        else:
+            w1 = r >= 0
+            w2 = r <= self.radial_width
+            ia = np.logical_and(w1, w2)
+            pna = np.logical_not(w2)
+            ext = np.logical_not(w1)
+            return ia, pna, ext
+
+

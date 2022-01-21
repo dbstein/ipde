@@ -7,6 +7,7 @@ from ipde.utilities import affine_transformation
 from ipde.derivatives import fd_x_4, fd_y_4, fourier
 from ipde.embedded_function import EmbeddedFunction, BoundaryFunction
 from near_finder.phys_routines import points_inside_curve_update
+from ipde.embedded_boundary_tr import LoadEmbeddedBoundary
 
 Grid = pybie2d.grid.Grid
 
@@ -26,6 +27,87 @@ class test(object):
         pass
 
 class EmbeddedPointPartition(object):
+    """
+    Partition the points (x, y), which need to have no structure
+
+    In particular, we separate the points into:
+        1) physical / exterior points
+        2) physical+not in any annulus; physical+in an annulus; exterior
+        3) physical+not in any annulus; physical+in annulus 1;
+            physical+in annulus 2; ...; physical+in annulus n; exterior
+    """
+    # fix_r TO BE REMOVED!!!
+    def __init__(self, ebdyc, x, y, fix_r=True):
+        self.grid = ebdyc.grid
+        self.x_check = x
+        self.y_check = y
+        self.sh = x.shape
+        self.x = x.ravel()
+        self.y = y.ravel()
+        self.size = self.x.size
+        # zone 1 is physical and not inside an annulus
+        zone1 = np.ones(self.size, dtype=bool)
+        zone1_or_2 = np.ones(self.size, dtype=bool)
+        # zone 2 is physical and inside an annulus
+        # given as a list of indeces
+        # the r, transformed r, and t values are also saved
+        zone2l = []
+        zone2r = []
+        zone2_transfr = []
+        zone2t = []
+        # zone 3 is non-physical
+        # given as list of indeces
+        # with r and t values also saved
+        zone3l = []
+        zone3r = []
+        zone3t = []
+        # loop over embedded boundaries
+        for ind, ebdy in enumerate(ebdyc):
+            code, interior, computed, full_r, full_t = ebdy.coordinate_mapper.classify(self.x, self.y)
+            is_annulus = code == 1
+            is_phys_not_annulus = code == (3 if ebdy.interior else 2)
+            is_phys = interior if ebdy.interior else ~interior
+            zone1 = np.logical_and(zone1, is_phys_not_annulus)
+            zone_1_or_2 = np.logical_and(zone1_or_2, is_phys)
+            # get in annulus points
+            zone2l.append(np.where(is_annulus)[0])
+            rhere = full_r[is_annulus]
+            zone2r.append(rhere)
+            zone2_transfr.append(ebdy.nufft_transform_r(rhere))
+            zone2t.append(full_t[is_annulus])
+            # i don't think there's a reason for zone3 to be a list?
+        zone3 = ~zone_1_or_2
+
+        # save these away
+        self.zone1 = zone1
+        self.zone1_or_2 = zone1_or_2
+        self.zone2l = zone2l
+        self.zone2r = zone2r
+        self.zone2_transfr = zone2_transfr
+        self.zone2t = zone2t
+
+        # get Ns
+        self.zone1_N = int(np.sum(self.zone1))
+        self.zone2_Ns = [len(z2) for z2 in self.zone2l]
+        self.zone2_N = int(np.sum(self.zone2_Ns))
+        self.zone3_N = int(np.sum(zone3))
+
+        # get transformed x's, y's for NUFFT interpolation (in zone1)
+        self.x_transf = affine_transformation(self.x[self.zone1], self.grid.x_bounds[0], self.grid.x_bounds[1], 0.0, 2*np.pi, use_numexpr=True)
+        self.y_transf = affine_transformation(self.y[self.zone1], self.grid.y_bounds[0], self.grid.y_bounds[1], 0.0, 2*np.pi, use_numexpr=True)
+
+    def is_it_i(self, x, y, fix_r):
+        x_is_i = x is self.x_check
+        y_is_i = y is self.y_check
+        return x_is_i and y_is_i
+
+    def reshape(self, out):
+        return out.reshape(self.sh)
+
+    def get_Ns(self):
+        return self.zone1_N, self.zone2_N, self.zone3_N
+
+class _old_EmbeddedPointPartition(object):
     """
     Partition the points (x, y), which need to have no structure
 
@@ -79,7 +161,9 @@ class EmbeddedPointPartition(object):
             width = ebdy.radial_width
             interior = ebdy.interior
             # find coordintes
-            full_r, full_t, have_coords, interior = ebdy.coordinate_mapper.classify(x, y)
+            # full_r, full_t, have_coords, interior = ebdy.coordinate_mapper.classify(x, y)
+            code, interior, computed, full_r, full_t = ebdy.coordinate_mapper.classify(x, y)
+            have_coords = computed
             r = full_r[have_coords]
             t = full_t[have_coords]
             # fix r values, if required
@@ -142,6 +226,16 @@ class EmbeddedPointPartition(object):
 
     def get_Ns(self):
         return self.zone1_N, self.zone2_N, self.zone3_N
+
+def LoadEmbeddedBoundaryCollection(d):
+    ebdy_list = [LoadEmbeddedBoundary(ebdy_dict) for ebdy_dict in d['ebdy_list']]
+    ebdyc = EmbeddedBoundaryCollection(ebdy_list)
+    if d['grid'] is not None:
+        ebdyc.register_grid(Grid(**d['grid']))
+    if d['bumpy'] is not None:
+        ebdyc.bumpy = d['bumpy']
+        ebdyc.bumpy_readied = True
+    return ebdyc
 
 class EmbeddedBoundaryCollection(object):
     def __init__(self, ebdy_list):

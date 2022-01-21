@@ -4,7 +4,7 @@ import weakref
 from ipde.embedded_boundary_tr import EmbeddedBoundary
 
 def LoadEmbeddedFunction(d, ebdyc=None):
-    from ipde.ebdy_collection import LoadEmbeddedBoundaryCollection
+    from ipde.ebdy_collection_tr import LoadEmbeddedBoundaryCollection
     if ebdyc is None:
         if 'ebdyc_dict' not in d:
             raise Exception('Need ebdyc provided unless save was generated with full_save method.')

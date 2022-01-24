@@ -76,7 +76,6 @@ class ScalarSolver(object):
         _, fc, fr_list = f.get_components()
         # get the grid-based solution
         uch, uc = self._grid_solve(fc)
-        self.uc_save = uc.copy() # only for plotting!  can be turned off for speed
         # get interpolate method
         if self.interpolation_order == np.Inf:
             # get derivatives in Fourier space
@@ -103,7 +102,6 @@ class ScalarSolver(object):
         self.iteration_counts = [helper.iterations_last_call for helper in self.helpers]
         # we now need to evaluate this onto the grid / interface points
         sigmag = np.concatenate(sigmag_list)
-        # out = self.Layer_Apply(self.grid_sources, self.ebdyc.grid_pnai, sigmag)
         out = self.evaluate_to_grid_pnai(sigmag)
         # need to divide this apart
         gu, bus = self.ebdyc.divide_pnai(out)

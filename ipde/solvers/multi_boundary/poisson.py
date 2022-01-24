@@ -29,7 +29,6 @@ class PoissonSolver(ScalarSolver):
         return PoissonHelper(ebdy, helper, grid_backend=self.grid_backend)
     def _grid_solve(self, fc):
         fc = self.ebdyc.demean_function(fc)
-        self._fc_save = fc.copy() # for plotting only!
         uch = fft2(fc)*self.ilap
         return uch, ifft2(uch).real
     def _get_specific_operators(self):

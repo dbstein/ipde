@@ -6,8 +6,9 @@ from ipde.grid_evaluators.modified_helmholtz_grid_evaluator import ModifiedHelmh
 from ipde.utilities import fft2, ifft2
 
 class ModifiedHelmholtzSolver(ScalarSolver):
-    def __init__(self, ebdyc, k, solver_type='spectral', helpers=None, grid_backend='pybie2d'):
+    def __init__(self, ebdyc, k, solver_type='spectral', helpers=None, grid_backend='pybie2d', source_upsample_factor=1.0):
         self.k = k
+        self.source_upsample_factor = source_upsample_factor
         super().__init__(ebdyc, solver_type, helpers, grid_backend)
     def _get_helper_combatibility(self, ebdy, helper):
         """
@@ -22,15 +23,17 @@ class ModifiedHelmholtzSolver(ScalarSolver):
             return 0
         if ebdy.bdy.N != helper.ebdy.bdy.N:
             return 0
+        if self.source_upsample_factor != helper.source_upsample_factor:
+            return 0
         if helper.ebdy is not ebdy:
             return 1
         return 2
     def _get_helper(self, ebdy, helper):
         c = self._get_helper_combatibility(ebdy, helper)
         if c == 0:
-            return ModifiedHelmholtzHelper(ebdy, k=self.k)
+            return ModifiedHelmholtzHelper(ebdy, k=self.k, source_upsample_factor=self.source_upsample_factor)
         elif c == 1:
-            return ModifiedHelmholtzHelper(ebdy, helper.annular_solver, k=self.k)
+            return ModifiedHelmholtzHelper(ebdy, helper.annular_solver, k=self.k, source_upsample_factor=source_upsample_factor)
         elif c == 2:
             return helper
         raise Exception('Helper compatibility returned unimplemented value.')

@@ -31,9 +31,9 @@ class ModifiedHelmholtzSolver(ScalarSolver):
     def _get_helper(self, ebdy, helper):
         c = self._get_helper_combatibility(ebdy, helper)
         if c == 0:
-            return ModifiedHelmholtzHelper(ebdy, k=self.k, source_upsample_factor=self.source_upsample_factor)
+            return ModifiedHelmholtzHelper(ebdy, k=self.k, source_upsample_factor=self.source_upsample_factor, grid_backend=self.grid_backend)
         elif c == 1:
-            return ModifiedHelmholtzHelper(ebdy, helper.annular_solver, k=self.k, source_upsample_factor=source_upsample_factor)
+            return ModifiedHelmholtzHelper(ebdy, helper.annular_solver, k=self.k, source_upsample_factor=source_upsample_factor, grid_backend=self.grid_backend)
         elif c == 2:
             return helper
         raise Exception('Helper compatibility returned unimplemented value.')
@@ -57,7 +57,7 @@ class ModifiedHelmholtzSolver(ScalarSolver):
                             ch*self.grid_sources.weights)
             self.Grid_Evaluator = evaluator
             self.split_grid_evaluation = True
-        elif self.grid_backend == 'pybie2d':
+        elif self.grid_backend == 'pybie2d' or self.grid_backend == 'fmm2d':
             self.split_grid_evaluation = False
             def evaluator(ch):
                 return self.Layer_Apply(self.grid_sources, self.ebdyc.grid_pnai, ch)

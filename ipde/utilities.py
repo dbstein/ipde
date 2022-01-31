@@ -98,6 +98,26 @@ def mifft(fh):
 def fourier_multiply(fh, m):
     return mfft(m*mifft(fh))
 
+def pfourier_multiply(fh, m):
+    pos = int(fh.shape[1]//2+1)
+    fh[:,pos] = 0.0
+    oh = fft(m*ifft(fh))
+    oh[:,pos] = 0.0
+    return oh
+def pfft(f):
+    pos = int(f.shape[1]//2+1)
+    fh = fft(f)
+    fh[:, pos] = 0.0
+    return fh
+def pifft(fh):
+    pos = int(fh.shape[1]//2+1)
+    fh[:, pos] = 0.0
+    return ifft(fh)
+def pifftr(fh):
+    pos = int(fh.shape[1]//2+1)
+    fh[:, pos] = 0.0
+    return ifft(fh).real
+
 def ffourier_multiply(fh, m):
     return fft(m*ifft(fh))
 

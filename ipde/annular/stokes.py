@@ -1,8 +1,9 @@
 import numpy as np
-from ..utilities import fast_dot, concat, fast_LU_solve, mfft, mifft, fourier_multiply
+from ..utilities import fast_dot, concat, fast_LU_solve, mfft, mifft, fourier_multiply, pfourier_multiply, pfft, pifft, pifftr
 import scipy as sp
 import scipy.linalg
 from personal_utilities.scipy_gmres import right_gmres
+import numba
 
 def scalar_laplacian(CO, AAG, RAG, uh):
     R01 = CO.R01
@@ -18,6 +19,56 @@ def scalar_laplacian(CO, AAG, RAG, uh):
     uh_rr = D12.dot(fourier_multiply(D01.dot(uh), psi1))
     luh = fourier_multiply(uh_rr+uh_tt, ipsi2)
     return luh
+def pscalar_laplacian(CO, AAG, RAG, uh):
+    R01 = CO.R01
+    R12 = CO.R12
+    D01 = CO.D01
+    D12 = CO.D12
+    k = AAG.k
+    psi1 = RAG.psi1
+    ipsi1 = RAG.inv_psi1
+    ipsi2 = RAG.inv_psi2
+    uh_t = R01.dot(uh*k*1j)
+    uh_tt = R12.dot(pfourier_multiply(uh_t, ipsi1)*k*1j)
+    uh_rr = D12.dot(pfourier_multiply(D01.dot(uh), psi1))
+    luh = pfourier_multiply(uh_rr+uh_tt, ipsi2)
+    return luh
+
+def splat0(fh):
+    sh2 = int((fh.shape[1]+1)//2)
+    oh = np.empty([fh.shape[0], 2*sh2], dtype=complex)
+    oh[:, :sh2] = fh[:, :sh2]
+    oh[:, sh2] = 0.0
+    oh[:, sh2+1:] = fh[:, sh2:]
+    return oh
+def desplat0(fh):
+    sh2 = int(fh.shape[1]//2)
+    oh = np.empty([fh.shape[0], 2*sh2-1], dtype=complex)
+    oh[:, :sh2] = fh[:, :sh2]
+    oh[:, sh2:] = fh[:, sh2+1:]
+    return oh
+
+@numba.njit(parallel=True, fastmath=True)
+def batch_matvec_par(A, x, out):
+    for i in numba.prange(A.shape[0]):
+        for j in range(A.shape[1]):
+            kaccum = 0.0
+            for k in range(A.shape[2]):
+                kaccum += A[i, j, k] * x[i, k]
+            out[i, j] = kaccum
+@numba.njit(parallel=False, fastmath=True)
+def batch_matvec_ser(A, x, out):
+    for i in numba.prange(A.shape[0]):
+        for j in range(A.shape[1]):
+            kaccum = 0.0
+            for k in range(A.shape[2]):
+                kaccum += A[i, j, k] * x[i, k]
+            out[i, j] = kaccum
+def batch_matvec(A, x, out):
+    if A.shape[0]*A.shape[1] > 10000:
+        batch_matvec_par(A, x, out)
+    else:
+        batch_matvec_ser(A, x, out)
 
 class AnnularStokesSolver(object):
     """
@@ -51,7 +102,7 @@ class AnnularStokesSolver(object):
         self.p_small_shape = (self.M-1, self.ns)
         self.p_shape = (self.M-1, self.n)
         self._construct()
-        self.APPLY = scipy.sparse.linalg.LinearOperator((self.NB, self.NB), dtype=complex, matvec=self._apply)
+        self.APPLY = scipy.sparse.linalg.LinearOperator((self.NB, self.NB), dtype=complex, matvec=self._papply_optim_real)
         self.PREC = scipy.sparse.linalg.LinearOperator((self.NB, self.NB), dtype=complex, matvec=self._preconditioner)
     def _construct(self):
         AAG = self.AAG
@@ -72,6 +123,7 @@ class AnnularStokesSolver(object):
         ns =     self.ns
         M =      self.M
         self._KLUS = []
+        self._KINVS = []
         for i in range(ns):
             K = np.zeros((3*M-1, 3*M-1), dtype=complex)
             LL = fast_dot(aipsi2, fast_dot(D12, fast_dot(apsi1, D01))) - \
@@ -97,16 +149,65 @@ class AnnularStokesSolver(object):
             if i == 0:
                 K[2*M:, 2*M:] += VI1[0]
             self._KLUS.append(sp.linalg.lu_factor(K))
+            self._KINVS.append(sp.linalg.inv(K))
+            self.Stacked_KINVS = np.stack(self._KINVS).copy()
+    # def _preconditioner(self, ffh):
+        # M = self.M
+        # frh, fth, fph = self._extract_stokes(ffh, withcopy=True)
+        # for i in range(self.ns):
+        #     vec = concat(frh[:,i], fth[:,i], fph[:,i])
+        #     vec = fast_LU_solve(self._KLUS[i], vec)
+        #     frh[:,i] = vec[0*M:1*M]
+        #     fth[:,i] = vec[1*M:2*M]
+        #     fph[:,i] = vec[2*M:]
+        # return concat(frh, fth, fph)
+    # def _preconditioner(self, ffh):
+    #     M = self.M
+    #     frh, fth, fph = self._extract_stokes(ffh, withcopy=True)
+    #     print(frh.shape)
+    #     for i in range(self.ns):
+    #         vec = concat(frh[:,i], fth[:,i], fph[:,i])
+    #         vec = np.dot(self._KINVS[i], vec)
+    #         frh[:,i] = vec[0*M:1*M]
+    #         fth[:,i] = vec[1*M:2*M]
+    #         fph[:,i] = vec[2*M:]
+    #     return concat(frh, fth, fph)
+    # def _preconditioner(self, ffh):
+    #     M = self.M
+    #     frh, fth, fph = self._extract_stokes(ffh, withcopy=True)
+    #     frh = frh.T.copy()
+    #     fth = fth.T.copy()
+    #     fph = fph.T.copy()
+    #     for i in range(self.ns):
+    #         vec = np.concatenate([frh[i], fth[i], fph[i]])
+    #         vec = np.dot(self._KINVS[i], vec)
+    #         frh[i] = vec[0*M:1*M]
+    #         fth[i] = vec[1*M:2*M]
+    #         fph[i] = vec[2*M:]
+    #     return np.concatenate([frh.ravel(order='F'), fth.ravel(order='F'), fph.ravel(order='F')])
+    # def _preconditioner(self, ffh):
+    #     M = self.M
+    #     frh, fth, fph = self._extract_stokes(ffh, withcopy=True)
+    #     ff = np.row_stack([frh, fth, fph]).T.copy()
+    #     out = np.zeros_like(ff)
+    #     for i in range(self.ns):
+    #         self._KINVS[i].dot(ff[i], out=ff[i])
+    #     ff = ff.T.copy()
+    #     frh = ff[0*self.NU:1*self.NU]
+    #     fth = ff[1*self.NU:2*self.NU]
+    #     fph = ff[2*self.NU:]
+    #     return np.concatenate([frh.ravel(), fth.ravel(), fph.ravel()])
     def _preconditioner(self, ffh):
         M = self.M
         frh, fth, fph = self._extract_stokes(ffh, withcopy=True)
-        for i in range(self.ns):
-            vec = concat(frh[:,i], fth[:,i], fph[:,i])
-            vec = fast_LU_solve(self._KLUS[i], vec)
-            frh[:,i] = vec[0*M:1*M]
-            fth[:,i] = vec[1*M:2*M]
-            fph[:,i] = vec[2*M:]
-        return concat(frh, fth, fph)
+        ff = np.row_stack([frh, fth, fph]).T.copy()
+        out = np.zeros_like(ff)
+        batch_matvec(self.Stacked_KINVS, ff, out)
+        ff = out.T.copy()
+        frh = ff[0*self.NU:1*self.NU]
+        fth = ff[1*self.NU:2*self.NU]
+        fph = ff[2*self.NU:]
+        return np.concatenate([frh.ravel(), fth.ravel(), fph.ravel()])
     def _extract_stokes(self, fh, withcopy=False):
         frh = fh[0*self.NU:1*self.NU         ].reshape(self.u_small_shape)
         fth = fh[1*self.NU:2*self.NU         ].reshape(self.u_small_shape)
@@ -162,8 +263,199 @@ class AnnularStokesSolver(object):
         fph[:,0] += VI1.dot(ph)[0,0] # this is the mean of the pressure!
         # get mean of the pressure
         return concat( frh_full, fth_full, fph )
+    def _papply(self, uuh):
+        AAG = self.AAG
+        RAG = self.RAG
+        CO = self.AAG.CO
+        ibcd = CO.ibc_dirichlet
+        obcd = CO.obc_dirichlet
+        D01  = CO.D01
+        D12  = CO.D12
+        R01  = CO.R01
+        R12  = CO.R12
+        R02  = CO.R02
+        VI1  = CO.VI1
+        k = AAG.k
+        psi0 = RAG.psi0
+        psi1 = RAG.psi1
+        ipsi1 = RAG.inv_psi1
+        ipsi2 = RAG.inv_psi2
+        DR_psi2 = RAG.DR_psi2
+        ipsi_DR_ipsi_DT_psi2 = RAG.ipsi_DR_ipsi_DT_psi2
+        ipsi_DT_ipsi_DR_psi2 = RAG.ipsi_DT_ipsi_DR_psi2
+        # a lot of room for optimization in this function!
+        urh, uth, ph = self._extract_stokes(uuh)
+        # get BCs first (before splatting)
+        ibcd_r = ibcd.dot(urh)
+        ibcd_t = ibcd.dot(uth)
+        obcd_r = obcd.dot(urh)
+        obcd_t = obcd.dot(uth)
+        # splat in nyquist mode
+        urh, uth, ph = splat0(urh), splat0(uth), splat0(ph)
+        # compute scalar laplacian
+        lap_urh = pscalar_laplacian(CO, AAG, RAG, urh)
+        lap_uth = pscalar_laplacian(CO, AAG, RAG, uth)
+        # ur equation
+        t1 = pfourier_multiply(R02.dot(uth*1j*k), 2*DR_psi2*ipsi2**2)
+        t2 = pfourier_multiply(R02.dot(urh), DR_psi2**2*ipsi2**2)
+        t3 = pfourier_multiply(R02.dot(uth), ipsi_DR_ipsi_DT_psi2)
+        t4 = D12.dot(ph)
+        frh = self.mu*(-lap_urh + t1 + t2 + t3) + t4
+        # ut equation
+        t1 = pfourier_multiply(R02.dot(urh*1j*k), 2*DR_psi2*ipsi2**2)
+        t2 = pfourier_multiply(R02.dot(uth), DR_psi2**2*ipsi2**2)
+        t3 = pfourier_multiply(R02.dot(urh), ipsi_DT_ipsi_DR_psi2)
+        t4 = pfourier_multiply(R12.dot(ph*1j*k), ipsi2)
+        fth = self.mu*(-lap_uth - t1 + t2 - t3) + t4
+        # div u equation
+        fph = pfourier_multiply(D01.dot(pfourier_multiply(urh, psi0)) + R01.dot(uth*1j*k), ipsi1)
+        # remove nyquist modes
+        frh, fth, fph = desplat0(frh), desplat0(fth), desplat0(fph)
+        # add BCS
+        frh_full = concat( frh, ibcd_r, obcd_r )
+        fth_full = concat( fth, ibcd_t, obcd_t )
+        # fph output
+        fph[:,0] += VI1.dot(ph)[0,0] # this is the mean of the pressure!
+        # get mean of the pressure
+        return concat( frh_full, fth_full, fph )
+    def _papply_optim(self, uuh):
+        AAG = self.AAG
+        RAG = self.RAG
+        CO = self.AAG.CO
+        ibcd = CO.ibc_dirichlet
+        obcd = CO.obc_dirichlet
+        D01  = CO.D01
+        D12  = CO.D12
+        R01  = CO.R01
+        R12  = CO.R12
+        R02  = CO.R02
+        VI1  = CO.VI1
+        k = AAG.k
+        psi0 = RAG.psi0
+        psi1 = RAG.psi1
+        ipsi1 = RAG.inv_psi1
+        ipsi2 = RAG.inv_psi2
+        DR_psi2 = RAG.DR_psi2
+        ipsi_DR_ipsi_DT_psi2 = RAG.ipsi_DR_ipsi_DT_psi2
+        ipsi_DT_ipsi_DR_psi2 = RAG.ipsi_DT_ipsi_DR_psi2
+        # a lot of room for optimization in this function!
+        urh, uth, ph = self._extract_stokes(uuh)
+        # get BCs first (before splatting)
+        ibcd_r = ibcd.dot(urh)
+        ibcd_t = ibcd.dot(uth)
+        obcd_r = obcd.dot(urh)
+        obcd_t = obcd.dot(uth)
+        # splat in nyquist mode
+        urh, uth, ph = splat0(urh), splat0(uth), splat0(ph)
+        ur, ut, p = pifft(urh), pifft(uth), pifft(ph)
+        dur, dut = pifft(self.ik*urh), pifft(self.ik*uth)
+        # compute scalar laplacian
+        # ur equation
+        t1 = R02.dot(dut) * self.combo1
+        t2 = R02.dot(ur) * self.combo2
+        t3 = R02.dot(ut) * ipsi_DR_ipsi_DT_psi2
+        t4 = D12.dot(p)
+        # get the scalar laplacian of ur
+        ur_t = R01.dot(dur)
+        ur_tt = R12.dot( pifft(pfft(ur_t*ipsi1)*self.ik) )
+        ur_rr = D12.dot( D01.dot(ur) * psi1 )
+        lap_ur = (ur_rr+ur_tt)*ipsi2
+        frh = pfft(self.mu*(-lap_ur+t1+t2+t3)+t4)
+        # ut equation
+        t1 = R02.dot(dur) * self.combo1
+        t2 = R02.dot(ut) * self.combo2
+        t3 = R02.dot(ur) * ipsi_DT_ipsi_DR_psi2
+        t4 = R12.dot(pifft(ph*self.ik)) * ipsi2
+        # get the scalar laplacian of ut
+        ut_t = R01.dot(dut)
+        ut_tt = R12.dot( pifft(pfft(ut_t*ipsi1)*self.ik) )
+        ut_rr = D12.dot( D01.dot(ut) * psi1 )
+        lap_ut = (ut_rr+ut_tt)*ipsi2
+        fth = pfft(self.mu*(-lap_ut-t1+t2-t3)+t4)
+        # div u equation
+        fph = pfft((D01.dot(ur*psi0) + R01.dot(dut))*ipsi1)
+        # remove nyquist modes
+        frh, fth, fph = desplat0(frh), desplat0(fth), desplat0(fph)
+        # add BCS
+        frh_full = concat( frh, ibcd_r, obcd_r )
+        fth_full = concat( fth, ibcd_t, obcd_t )
+        # fph output
+        fph[:,0] += VI1.dot(ph)[0,0] # this is the mean of the pressure!
+        # get mean of the pressure
+        return concat( frh_full, fth_full, fph )
+    def _papply_optim_real(self, uuh):
+        AAG = self.AAG
+        RAG = self.RAG
+        CO = self.AAG.CO
+        ibcd = CO.ibc_dirichlet
+        obcd = CO.obc_dirichlet
+        D01  = CO.D01
+        D12  = CO.D12
+        R01  = CO.R01
+        R12  = CO.R12
+        R02  = CO.R02
+        VI1  = CO.VI1
+        k = AAG.k
+        psi0 = RAG.psi0
+        psi1 = RAG.psi1
+        ipsi1 = RAG.inv_psi1
+        ipsi2 = RAG.inv_psi2
+        DR_psi2 = RAG.DR_psi2
+        ipsi_DR_ipsi_DT_psi2 = RAG.ipsi_DR_ipsi_DT_psi2
+        ipsi_DT_ipsi_DR_psi2 = RAG.ipsi_DT_ipsi_DR_psi2
+        # a lot of room for optimization in this function!
+        urh, uth, ph = self._extract_stokes(uuh)
+        # get BCs first (before splatting)
+        ibcd_r = ibcd.dot(urh)
+        ibcd_t = ibcd.dot(uth)
+        obcd_r = obcd.dot(urh)
+        obcd_t = obcd.dot(uth)
+        # splat in nyquist mode
+        urh, uth, ph = splat0(urh), splat0(uth), splat0(ph)
+        ur, ut, p = pifftr(urh), pifftr(uth), pifftr(ph)
+        dur, dut = pifftr(self.ik*urh), pifftr(self.ik*uth)
+        # compute scalar laplacian
+        # ur equation
+        W1r = R02.dot(ur)
+        W1t = R02.dot(ut)
+        t1 = R02.dot(dut) * self.combo1
+        t2 = W1r * self.combo2
+        t3 = W1t * ipsi_DR_ipsi_DT_psi2
+        t4 = D12.dot(p)
+        # get the scalar laplacian of ur
+        ur_t = R01.dot(dur)
+        ur_tt = R12.dot( pifftr(pfft(ur_t*ipsi1)*self.ik) )
+        ur_rr = D12.dot( D01.dot(ur) * psi1 )
+        lap_ur = (ur_rr+ur_tt)*ipsi2
+        frh = pfft(self.mu*(-lap_ur+t1+t2+t3)+t4)
+        # ut equation
+        t1 = R02.dot(dur) * self.combo1
+        t2 = W1t * self.combo2
+        t3 = W1r * ipsi_DT_ipsi_DR_psi2
+        t4 = R12.dot(pifftr(ph*self.ik)) * ipsi2
+        # get the scalar laplacian of ut
+        W2 = R01.dot(dut)
+        ut_t = W2
+        ut_tt = R12.dot( pifftr(pfft(ut_t*ipsi1)*self.ik) )
+        ut_rr = D12.dot( D01.dot(ut) * psi1 )
+        lap_ut = (ut_rr+ut_tt)*ipsi2
+        fth = pfft(self.mu*(-lap_ut-t1+t2-t3)+t4)
+        # div u equation
+        fph = pfft((D01.dot(ur*psi0) + W2)*ipsi1)
+        # remove nyquist modes
+        frh, fth, fph = desplat0(frh), desplat0(fth), desplat0(fph)
+        # add BCS
+        frh_full = concat( frh, ibcd_r, obcd_r )
+        fth_full = concat( fth, ibcd_t, obcd_t )
+        # fph output
+        fph[:,0] += VI1.dot(ph)[0,0] # this is the mean of the pressure!
+        # get mean of the pressure
+        return concat( frh_full, fth_full, fph )
     def solve(self, RAG, fr, ft, irg, itg, org, otg, verbose=False, **kwargs):
         self.RAG = RAG
+        self.combo1 = 2*self.RAG.DR_psi2*self.RAG.inv_psi2**2
+        self.combo2 = self.RAG.DR_psi2**2*self.RAG.inv_psi2**2
+        self.ik = self.AAG.k*1j
         R02 = self.AAG.CO.R02
         P10 = self.AAG.CO.P10
         ffr = concat(R02.dot(fr), irg, org)

@@ -95,6 +95,8 @@ def mifft(fh):
     temp[:,N2]    = 0.0
     temp[:,N2+1:] = fh[:,N2:]
     return ifft(temp)
+def mifftr(fh):
+    return mifft(fh).real
 def fourier_multiply(fh, m):
     return mfft(m*mifft(fh))
 

@@ -1,5 +1,5 @@
 import numpy as np
-from ..utilities import fast_dot, concat, fast_LU_solve, mfft, mifft, fourier_multiply, pfourier_multiply, pfft, pifft, pifftr
+from ..utilities import fast_dot, concat, fast_LU_solve, mfft, mifft, fourier_multiply, pfourier_multiply, pfft, pifft, pifftr, mifftr
 import scipy as sp
 import scipy.linalg
 from personal_utilities.scipy_gmres import right_gmres
@@ -102,7 +102,7 @@ class AnnularStokesSolver(object):
         self.p_small_shape = (self.M-1, self.ns)
         self.p_shape = (self.M-1, self.n)
         self._construct()
-        self.APPLY = scipy.sparse.linalg.LinearOperator((self.NB, self.NB), dtype=complex, matvec=self._papply_optim_real)
+        self.APPLY = scipy.sparse.linalg.LinearOperator((self.NB, self.NB), dtype=complex, matvec=self._apply_optim_real)
         self.PREC = scipy.sparse.linalg.LinearOperator((self.NB, self.NB), dtype=complex, matvec=self._preconditioner)
     def _construct(self):
         AAG = self.AAG
@@ -148,9 +148,9 @@ class AnnularStokesSolver(object):
             # fix the pressure nullspace
             if i == 0:
                 K[2*M:, 2*M:] += VI1[0]
-            self._KLUS.append(sp.linalg.lu_factor(K))
+            # self._KLUS.append(sp.linalg.lu_factor(K))
             self._KINVS.append(sp.linalg.inv(K))
-            self.Stacked_KINVS = np.stack(self._KINVS).copy()
+        self.Stacked_KINVS = np.stack(self._KINVS)
     # def _preconditioner(self, ffh):
         # M = self.M
         # frh, fth, fph = self._extract_stokes(ffh, withcopy=True)
@@ -318,6 +318,71 @@ class AnnularStokesSolver(object):
         fph[:,0] += VI1.dot(ph)[0,0] # this is the mean of the pressure!
         # get mean of the pressure
         return concat( frh_full, fth_full, fph )
+    def _apply_optim_real(self, uuh):
+        AAG = self.AAG
+        RAG = self.RAG
+        CO = self.AAG.CO
+        ibcd = CO.ibc_dirichlet
+        obcd = CO.obc_dirichlet
+        D01  = CO.D01
+        D12  = CO.D12
+        R01  = CO.R01
+        R12  = CO.R12
+        R02  = CO.R02
+        VI1  = CO.VI1
+        k = AAG.ks
+        psi0 = RAG.psi0
+        psi1 = RAG.psi1
+        ipsi1 = RAG.inv_psi1
+        ipsi2 = RAG.inv_psi2
+        DR_psi2 = RAG.DR_psi2
+        ipsi_DR_ipsi_DT_psi2 = RAG.ipsi_DR_ipsi_DT_psi2
+        ipsi_DT_ipsi_DR_psi2 = RAG.ipsi_DT_ipsi_DR_psi2
+        # a lot of room for optimization in this function!
+        urh, uth, ph = self._extract_stokes(uuh)
+        # get BCs first (before splatting)
+        ibcd_r = ibcd.dot(urh)
+        ibcd_t = ibcd.dot(uth)
+        obcd_r = obcd.dot(urh)
+        obcd_t = obcd.dot(uth)
+        # splat in nyquist mode
+        ur, ut, p = mifftr(urh), mifftr(uth), mifftr(ph)
+        dur, dut = mifftr(self.iks*urh), mifftr(self.iks*uth)
+        # compute scalar laplacian
+        # ur equation
+        W1r = R02.dot(ur)
+        W1t = R02.dot(ut)
+        t1 = R02.dot(dut) * self.combo1
+        t2 = W1r * self.combo2
+        t3 = W1t * ipsi_DR_ipsi_DT_psi2
+        t4 = D12.dot(p)
+        # get the scalar laplacian of ur
+        ur_t = R01.dot(dur)
+        ur_tt = R12.dot( mifftr(mfft(ur_t*ipsi1)*self.iks) )
+        ur_rr = D12.dot( D01.dot(ur) * psi1 )
+        lap_ur = (ur_rr+ur_tt)*ipsi2
+        frh = mfft(self.mu*(-lap_ur+t1+t2+t3)+t4)
+        # ut equation
+        t1 = R02.dot(dur) * self.combo1
+        t2 = W1t * self.combo2
+        t3 = W1r * ipsi_DT_ipsi_DR_psi2
+        t4 = R12.dot(mifftr(ph*self.iks)) * ipsi2
+        # get the scalar laplacian of ut
+        W2 = R01.dot(dut)
+        ut_t = W2
+        ut_tt = R12.dot( mifftr(mfft(ut_t*ipsi1)*self.iks) )
+        ut_rr = D12.dot( D01.dot(ut) * psi1 )
+        lap_ut = (ut_rr+ut_tt)*ipsi2
+        fth = mfft(self.mu*(-lap_ut-t1+t2-t3)+t4)
+        # div u equation
+        fph = mfft((D01.dot(ur*psi0) + W2)*ipsi1)
+        # add BCS
+        frh_full = concat( frh, ibcd_r, obcd_r )
+        fth_full = concat( fth, ibcd_t, obcd_t )
+        # fph output
+        fph[:,0] += VI1.dot(ph)[0,0] # this is the mean of the pressure!
+        # get mean of the pressure
+        return concat( frh_full, fth_full, fph )
     def _papply_optim(self, uuh):
         AAG = self.AAG
         RAG = self.RAG
@@ -456,6 +521,7 @@ class AnnularStokesSolver(object):
         self.combo1 = 2*self.RAG.DR_psi2*self.RAG.inv_psi2**2
         self.combo2 = self.RAG.DR_psi2**2*self.RAG.inv_psi2**2
         self.ik = self.AAG.k*1j
+        self.iks = self.AAG.ks*1j
         R02 = self.AAG.CO.R02
         P10 = self.AAG.CO.P10
         ffr = concat(R02.dot(fr), irg, org)

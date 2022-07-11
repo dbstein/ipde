@@ -12,7 +12,7 @@ from near_finder.points_near_curve import gridpoints_near_curve_update, gridpoin
 from near_finder.phys_routines import points_inside_curve
 from ipde.slepian.chebeval_bump_step import SlepianMollifier
 from ipde.utilities import affine_transformation, get_chebyshev_nodes, SimpleFourierFilter
-from qfs.two_d_qfs import QFS_Boundary
+# from qfs.two_d_qfs import QFS_Boundary
 from near_finder.general_tree import LightweightCoordinateTree, FullCoordinateTree
 
 def setit(name, dictionary, default):

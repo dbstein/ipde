@@ -63,7 +63,14 @@ class EmbeddedPointPartition(object):
         zone3t = []
         # loop over embedded boundaries
         for ind, ebdy in enumerate(ebdyc):
-            code, interior, computed, full_r, full_t = ebdy.coordinate_mapper.classify(self.x, self.y)
+            # code, interior, computed, full_r, full_t = ebdy.coordinate_mapper.classify(self.x, self.y)
+            code, interior, computed, full_r, full_t = ebdy.coordinate_mapper.classify(
+                                    self.x,
+                                    self.y,
+                                    inner_coord=ebdy.inner_radial_distance,
+                                    outer_coord=ebdy.outer_radial_distance,
+                                    **ebdy.coordinate_search_kwargs
+                                )
             is_annulus = code == 1
             is_phys_not_annulus = code == (3 if ebdy.interior else 2)
             is_phys = interior if ebdy.interior else ~interior

@@ -4,34 +4,44 @@ import matplotlib.pyplot as plt
 import pybie2d
 from ipde.embedded_boundary import EmbeddedBoundary
 from ipde.ebdy_collection import EmbeddedBoundaryCollection
+from ipde.embedded_function import EmbeddedFunction, BoundaryFunction
 from ipde.heavisides import SlepianMollifier
 from ipde.derivatives import fd_x_4, fd_y_4, fourier
 from ipde.solvers.multi_boundary.modified_helmholtz import ModifiedHelmholtzSolver
-from qfs.two_d_qfs import QFS_Evaluator
+from qfs.modified_helmholtz_qfs import Modified_Helmholtz_QFS
 from personal_utilities.arc_length_reparametrization import arc_length_parameterize
+from ipde.grid_evaluators.modified_helmholtz_grid_evaluator import ModifiedHelmholtzFreespaceGridEvaluator, ModifiedHelmholtzGridBackend
 star = pybie2d.misc.curve_descriptions.star
 squish = pybie2d.misc.curve_descriptions.squished_circle
 GSB = pybie2d.boundaries.global_smooth_boundary.global_smooth_boundary.Global_Smooth_Boundary
 Grid = pybie2d.grid.Grid
 MH_Layer_Form = pybie2d.kernels.high_level.modified_helmholtz.Modified_Helmholtz_Layer_Form
 MH_Layer_Apply = pybie2d.kernels.high_level.modified_helmholtz.Modified_Helmholtz_Layer_Apply
+BoundaryCollection = pybie2d.boundaries.collection.BoundaryCollection
 
-nb = 300
+nb_base = 40
+adj = 5
+nb = nb_base * adj
+M = max(4, min(3*adj, 20))
 helmholtz_k = 5.0
-M = 8
-pad_zone = 0
-verbose = False
-plot = True
+verbose = True
+plot = False
 reparametrize = False
 slepian_r = 1.5*M
-solver_type = 'spectral' # fourth or spectral
+evaluation_backend = 'grid'
+solver_type = 'spectral'
+coordinate_scheme = 'nufft'
+tols = 1e-12
+solver_tol = tols
+coordinate_tol = tols
+qfs_tolerance = tols
 
 # get heaviside function
 MOL = SlepianMollifier(slepian_r)
 # construct boundary
-bdy1 = GSB(c=star(4*nb, a=0.0, r=3, f=11))
-bdy2 = GSB(c=squish(nb, x=-1.2, y=-0.7, b=0.05, rot=-np.pi/4))
-bdy3 = GSB(c=star(nb, x=1, y=0.5, a=0.3, f=3))
+bdy1 = GSB(c=star(12*nb, a=0.0, r=3, f=11))
+bdy2 = GSB(c=squish(2*nb, x=-1.2, y=-0.7, b=0.05, rot=-np.pi/4))
+bdy3 = GSB(c=star(3*nb, x=1, y=0.5, a=0.3, f=3))
 if reparametrize:
 	bdy1 = GSB(*arc_length_parameterize(bdy1.x, bdy1.y))
 	bdy2 = GSB(*arc_length_parameterize(bdy2.x, bdy2.y))
@@ -40,35 +50,13 @@ bh1 = bdy1.dt*bdy1.speed.min()
 bh2 = bdy2.dt*bdy2.speed.min()
 bh3 = bdy3.dt*bdy3.speed.min()
 bh = min(bh1, bh2, bh3)
-if False:
-	fig, ax = plt.subplots()
-	ax.scatter(bdy1.x, bdy1.y, color='black')
-	ax.scatter(bdy2.x, bdy2.y, color='blue')
-	ax.scatter(bdy3.x, bdy3.y, color='red')
-# get number of gridpoints to roughly match boundary spacing
-ng = 2*int(0.5*7//bh)
-# construct a grid
-grid = Grid([-3.5, 3.5], ng, [-3.5, 3.5], ng, x_endpoints=[True, False], y_endpoints=[True, False])
 # construct embedded boundary
 bdys = [bdy1, bdy2, bdy3]
-ebdys = [EmbeddedBoundary(bdy, bdy is bdy1, M, bh, pad_zone, MOL.step) for bdy in bdys]
+ebdys = [EmbeddedBoundary(bdy, bdy is bdy1, M, bh, heaviside=MOL.step) for bdy in bdys]
 ebdyc = EmbeddedBoundaryCollection(ebdys)
 # register the grid
 print('\nRegistering the grid')
-ebdyc.register_grid(grid, verbose=verbose)
-# make some plots
-if False:
-	fig, ax = plt.subplots()
-	colors = ['black', 'blue', 'red', 'purple', 'purple']
-	for ebdy in ebdys:
-		q = ebdy.bdy_qfs
-		q1 = q.interior_source_bdy if ebdy.interior else q.exterior_source_bdy
-		q = ebdy.interface_qfs
-		q2 = q.interior_source_bdy
-		q3 = q.exterior_source_bdy
-		bbs = [ebdy.bdy, ebdy.interface, q1, q2, q3]
-		for bi, bb in enumerate(bbs):
-			ax.plot(bb.x, bb.y, color=colors[bi])
+grid = ebdyc.generate_grid(force_square=True)
 
 ################################################################################
 # Get solution, forces, BCs
@@ -81,22 +69,30 @@ solution_func_x = lambda x, y: k*np.cos(k*x)*np.exp(np.sin(k*x))*np.sin(k*y)
 solution_func_y = lambda x, y: k*np.exp(np.sin(k*x))*np.cos(k*y)
 solution_func_n = lambda x, y, nx, ny: solution_func_x(x, y)*nx + solution_func_y(x, y)*ny
 force_func = lambda x, y: helmholtz_k**2*solution_func(x, y) - k**2*np.exp(np.sin(k*x))*np.sin(k*y)*(np.cos(k*x)**2-np.sin(k*x)-1.0)
-f = force_func(grid.xg, grid.yg)
-frs = [force_func(ebdy.radial_x, ebdy.radial_y) for ebdy in ebdys]
-ua = solution_func(grid.xg, grid.yg)
-uars = [solution_func(ebdy.radial_x, ebdy.radial_y) for ebdy in ebdys]
+f = EmbeddedFunction(ebdyc, function=force_func)
+ua = EmbeddedFunction(ebdyc, function=solution_func)
 all_nx = np.concatenate([ebdy.bdy.normal_x for ebdy in ebdys])
 all_ny = np.concatenate([ebdy.bdy.normal_y for ebdy in ebdys])
-bcs2v = solution_func_n(ebdyc.all_bvx, ebdyc.all_bvy, all_nx, all_ny)
-bcs2l = ebdyc.v2l(bcs2v)
+bcs2v_x = BoundaryFunction(ebdyc, function=solution_func_x)
+bcs2v_y = BoundaryFunction(ebdyc, function=solution_func_y)
+bcs2v = bcs2v_x*all_nx + bcs2v_y*all_ny
 
 ################################################################################
-# Setup Poisson Solver
+# Setup Solver
+
+if evaluation_backend == 'grid':
+	MHGB = ModifiedHelmholtzGridBackend(grid.xh, 20, helmholtz_k)
+	MHGE = ModifiedHelmholtzFreespaceGridEvaluator(MHGB, grid.xv, grid.yv)
+	grid_backend = MHGE
+else:
+	grid_backend = evaluation_backend
+
+import time
 
 print('Creating inhomogeneous solver')
-solver = ModifiedHelmholtzSolver(ebdyc, solver_type=solver_type, k=helmholtz_k)
+solver = ModifiedHelmholtzSolver(ebdyc, helmholtz_k, solver_type=solver_type, grid_backend=grid_backend)
 print('Solving inhomogeneous problem')
-ue, uers = solver(f, frs, tol=1e-12, verbose=verbose)
+ue = solver(f, tol=solver_tol, verbose=verbose)
 
 print('Solving homogeneous problem')
 # this isn't correct yet because we haven't applied boundary conditions
@@ -135,7 +131,7 @@ MATS[2][1][:] = s_only(bdy2, bdy3)
 MATS[2][2][:] = s_singular(bdy3) + half_eye(bdy3)
 
 # get the inhomogeneous solution on the boundary
-bvs = solver.get_boundary_normal_derivatives(uers)
+bvs = solver.get_boundary_normal_derivatives(ue)
 
 # solve for density
 tau = -np.linalg.solve(MAT, bcs2v - bvs)
@@ -144,13 +140,18 @@ tau = -np.linalg.solve(MAT, bcs2v - bvs)
 taul = ebdyc.v2l(tau)
 
 # get effective sources
+qfs_options = {
+	'tol'        : qfs_tolerance,
+	'shift_type' : 'complex',
+}
 qfs_list = []
-Naive_SLP = lambda src, trg: MH_Layer_Form(src, trg, ifcharge=True, k=helmholtz_k)
+qfs_sources = BoundaryCollection()
 for ebdy in ebdys:
-	def Kernel_Function(src, trg):
-		return src.Modified_Helmholtz_SLP_Self_Form(k=helmholtz_k)
-	qfs = QFS_Evaluator(ebdy.bdy_qfs, ebdy.interior, [Kernel_Function,], Naive_SLP, on_surface=True, form_b2c=False)
+	interior = ebdy is ebdys[0]
+	qfs = Modified_Helmholtz_QFS(ebdy.bdy, interior, True, False, helmholtz_k, qfs_options)
 	qfs_list.append(qfs)
+	qfs_sources.add(qfs.source, 'i' if interior else 'e')
+qfs_sources.amass_information()
 
 # compute sigmas
 sigmal = [qfs([tau]) for qfs, tau in zip(qfs_list, taul)]
@@ -158,37 +159,24 @@ sigmav = np.concatenate(sigmal)
 
 print('Evaluating homogeneous solution')
 # evaluate this onto all gridpoints and radial points
-out = MH_Layer_Apply(ebdyc.bdy_inward_sources, ebdyc.grid_and_radial_pts, charge=sigmav, k=helmholtz_k)
-gslp, rslpl = ebdyc.divide_grid_and_radial(out)
-
-ue[ebdyc.phys] += gslp
-for uer, rslp in zip(uers, rslpl):
-	uer += rslp
+out = MH_Layer_Apply(qfs_sources, ebdyc.grid_and_radial_pts, charge=sigmav, k=helmholtz_k)
+ue += out
 
 if plot:
-	print('Plotting solution')
-	mue = np.ma.array(ue, mask=ebdyc.ext)
 	fig, ax = plt.subplots()
-	clf = ax.pcolormesh(grid.xg, grid.yg, mue)
-	for ebdy in ebdys:
-		ax.plot(ebdy.bdy.x, ebdy.bdy.y, color='black', linewidth=3)
-		ax.plot(ebdy.interface.x, ebdy.interface.y, color='white', linewidth=1, alpha=0.1)
+	clf = ue.plot(ax, cmap=mpl.cm.jet)
+	for ebdy in ebdyc:
+		ax.plot(ebdy.bdy.x, ebdy.bdy.y, color='black')
 	plt.colorbar(clf)
 
 # compute the error
-rerrs = [np.abs(uer - uar).max() for uer, uar in zip(uers, uars)]
-gerr = np.abs(ue - ua)
-gerrp = gerr[ebdyc.phys]
-mgerr = np.ma.array(gerr, mask=ebdyc.ext)
+err = np.abs(ue-ua)
 
 if plot:
 	fig, ax = plt.subplots()
-	clf = ax.pcolormesh(grid.xg, grid.yg, mgerr + 1e-15, norm=mpl.colors.LogNorm())
-	for ebdy in ebdys:
-		ax.plot(ebdy.bdy.x, ebdy.bdy.y, color='black', linewidth=3)
-		ax.plot(ebdy.interface.x, ebdy.interface.y, color='white', linewidth=1, alpha=0.1)
+	clf = (err+1e-16).plot(ax, norm=mpl.colors.LogNorm(), cmap=mpl.cm.jet)
+	for ebdy in ebdyc:
+		ax.plot(ebdy.bdy.x, ebdy.bdy.y, color='black')
 	plt.colorbar(clf)
 
-print('\nError in grid:         {:0.2e}'.format(gerrp.max()))
-for ri, rerr in enumerate(rerrs):
-	print('Error in annulus', ri+1, 'is: {:0.2e}'.format(rerr))
+print('\nMaximum Error: {:0.2e}'.format(err.max()))

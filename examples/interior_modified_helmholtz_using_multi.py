@@ -4,6 +4,7 @@ import matplotlib.pyplot as plt
 import pybie2d
 from ipde.embedded_boundary import EmbeddedBoundary
 from ipde.ebdy_collection import EmbeddedBoundaryCollection
+from ipde.embedded_function import EmbeddedFunction, BoundaryFunction
 from ipde.heavisides import SlepianMollifier
 from ipde.derivatives import fd_x_4, fd_y_4, fourier
 from ipde.solvers.multi_boundary.modified_helmholtz import ModifiedHelmholtzSolver
@@ -15,6 +16,8 @@ GSB = pybie2d.boundaries.global_smooth_boundary.global_smooth_boundary.Global_Sm
 Grid = pybie2d.grid.Grid
 MH_Layer_Form = pybie2d.kernels.high_level.modified_helmholtz.Modified_Helmholtz_Layer_Form
 MH_Layer_Apply = pybie2d.kernels.high_level.modified_helmholtz.Modified_Helmholtz_Layer_Apply
+
+from ipde.grid_evaluators.modified_helmholtz_grid_evaluator import ModifiedHelmholtzFreespaceGridEvaluator, ModifiedHelmholtzGridBackend
 
 ns =     [200,     300,     400,     500,     600,     700,      800,      900,      1000,     1100,     1200,     1300,     1400,     1500,     1600     ]
 errs4  = [7.06e-2, 2.03e-2, 7.52e-3, 3.33e-3, 1.71e-3, 9.71e-4,  5.90e-4,  3.76e-4,  2.48e-4,  1.74e-04, 1.25e-04, 9.21e-05, 6.89e-05, 5.22e-05, 4.10e-05 ]
@@ -42,13 +45,16 @@ nb = 300
 # M = min(30, 4*int(nb/100))
 M = 8
 helmholtz_k = 2.0
-pad_zone = 0
 verbose = True
 plot = False
 reparametrize = False
-slepian_r = 2.0*M
+slepian_r = 1.5*M
 
 solver_type = 'spectral' # fourth or spectral
+solver_tol = 1e-12
+coordinate_scheme = 'nufft'
+coordinate_tol = 1e-12
+qfs_tolerance = 1e-12
 
 # get heaviside function
 MOL = SlepianMollifier(slepian_r)
@@ -77,25 +83,9 @@ k = 8*np.pi/3
 
 solution_func = lambda x, y: np.exp(np.sin(k*x))*np.sin(k*y)
 force_func = lambda x, y: helmholtz_k**2*solution_func(x, y) - k**2*np.exp(np.sin(k*x))*np.sin(k*y)*(np.cos(k*x)**2-np.sin(k*x)-1.0)
-# def solution_func_i(x, y, i):
-# 	return np.exp(-np.sqrt(2**i))*(np.cos((2**i)*x) + np.cos((2**i)*y))
-# def solution_func(x, y):
-# 	out = np.zeros_like(x)
-# 	for i in range(6):
-# 		out += solution_func_i(x, y, i)
-# 	return out
-# def force_func(x, y):
-# 	out = np.zeros_like(x)
-# 	for i in range(6):
-# 		out += 2**(2*i)*solution_func_i(x, y, i)
-# 	return out + 2**2*solution_func(x, y)
-f = force_func(ebdy.grid.xg, ebdy.grid.yg)*ebdy.phys
-frs = [force_func(ebdy.radial_x, ebdy.radial_y) for ebdy in ebdys]
-ua = solution_func(ebdy.grid.xg, ebdy.grid.yg)*ebdy.phys
-uars = [solution_func(ebdy.radial_x, ebdy.radial_y) for ebdy in ebdys]
-uar = uars[0]
-bcs2v = solution_func(ebdyc.all_bvx, ebdyc.all_bvy)
-bcs2l = ebdyc.v2l(bcs2v)
+f = EmbeddedFunction(ebdyc, function=force_func)
+u = EmbeddedFunction(ebdyc, function=solution_func)
+bv = BoundaryFunction(ebdyc, function=solution_func)
 
 ################################################################################
 # Setup Poisson Solver

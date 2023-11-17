@@ -17,13 +17,13 @@ Laplace_Layer_Apply = pybie2d.kernels.high_level.laplace.Laplace_Layer_Apply
 Singular_DLP = lambda src, _: Laplace_Layer_Singular_Form(src, ifdipole=True) - 0.5*np.eye(src.N)
 Naive_SLP = lambda src, trg: Laplace_Layer_Form(src, trg, ifcharge=True)
 
-nb = 1400
-M = 18
+nb = 1800
+M = 24
 pad_zone = 0
 verbose = False
 plot = True
 reparametrize = True
-slepian_r = 2*M
+slepian_r = 1.5*M
 solver_type = 'spectral' # fourth or spectral
 
 # get heaviside function
@@ -38,7 +38,7 @@ ng = 2*int(0.5*2.4//bh)
 # construct a grid
 grid = Grid([-1.2, 1.2], ng, [-1.2, 1.2], ng, x_endpoints=[True, False], y_endpoints=[True, False])
 # construct embedded boundary
-ebdy = EmbeddedBoundary(bdy, True, M, bh*1.0, pad_zone, MOL.step)
+ebdy = EmbeddedBoundary(bdy, True, M, bh*1.0, pad_zone=pad_zone, heaviside=MOL.step)
 ebdyc = EmbeddedBoundaryCollection([ebdy,])
 # register the grid
 print('\nRegistering the grid')
@@ -91,8 +91,10 @@ if plot:
 
 # compute the error
 err = np.abs(ue - ua)
-gerr = err.grid_max()
-rerr = err.radial_max()
+gerr = err.get_grid_value(masked=True)
+rerr = err[0]
+mgerr = gerr.max()
+mrerr = rerr.max()
 
 if plot:
 	fig, ax = plt.subplots()
@@ -101,5 +103,5 @@ if plot:
 	ax.plot(ebdy.interface.x, ebdy.interface.y, color='white', linewidth=3)
 	plt.colorbar(clf)
 
-print('Error in grid:    {:0.2e}'.format(gerr.max()))
-print('Error in annulus: {:0.2e}'.format(rerr.max()))
+print('Error in grid:    {:0.2e}'.format(mgerr))
+print('Error in annulus: {:0.2e}'.format(mrerr))

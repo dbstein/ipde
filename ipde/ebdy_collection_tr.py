@@ -1,7 +1,6 @@
 import numpy as np
 import pybie2d
 import fast_interp
-import finufft
 PointSet = pybie2d.point_set.PointSet
 from ipde.utilities import affine_transformation
 from ipde.derivatives import fd_x_4, fd_y_4, fourier
@@ -577,10 +576,12 @@ class EmbeddedBoundaryCollection(object):
         """
         Call through interpolate_grid_to_interface
         """
-        funch = np.fft.fft2(f)
-        out = np.zeros(self.interfaces_x_transf.size, dtype=complex)
-        diagnostic = finufft.nufft2d2(self.interfaces_x_transf, self.interfaces_y_transf, funch, out, isign=1, eps=1e-14, modeord=1)
-        return out.real/np.prod(funch.shape)
+        interpolater = periodic_interp2d(f=f, eps=1e-14)
+        return interpolater(self.interfaces_x_transf, self.interfaces_y_transf).real
+        # funch = np.fft.fft2(f)
+        # out = np.zeros(self.interfaces_x_transf.size, dtype=complex)
+        # diagnostic = finufft.nufft2d2(self.interfaces_x_transf, self.interfaces_y_transf, funch, out, isign=1, eps=1e-14, modeord=1)
+        # return out.real/np.prod(funch.shape)
     def update_radial_to_grid1(self, f):
         # _, fg, fr = f.get_components()
         _ = self.interpolate_radial_to_grid1(f.get_radial_value_list(), f['grid'])
@@ -644,11 +645,14 @@ class EmbeddedBoundaryCollection(object):
         # interpolate appropriate portion with grid (polynomial, for now...)
         if c1n > 0:
             zone1 = p.zone1
-            funch = np.fft.fft2(ff.get_smoothed_grid_value())
-            out = np.zeros(p.zone1_N, dtype=complex)
-            diagnostic = finufft.nufft2d2(p.x_transf, p.y_transf, funch, out, isign=1, eps=1e-14, modeord=1)
-            out.real/np.prod(funch.shape)
-            output[zone1] = out.real/np.prod(funch.shape)
+            interpolater = periodic_interp2d(f=ff.get_smoothed_grid_value(), eps=1e-14)
+            out = interpolater(p.x_transf, p.y_transf)
+            output[zone1] = out.real
+            # funch = np.fft.fft2(ff.get_smoothed_grid_value())
+            # out = np.zeros(p.zone1_N, dtype=complex)
+            # diagnostic = finufft.nufft2d2(p.x_transf, p.y_transf, funch, out, isign=1, eps=1e-14, modeord=1)
+            # out.real/np.prod(funch.shape)
+            # output[zone1] = out.real/np.prod(funch.shape)
         if c2n > 0:
             for ind in range(self.N):
                 ebdy = self[ind]

@@ -52,5 +52,13 @@ f3, ebdyc3 = LoadEmbeddedFunction(f_full_dict)
 import pickle
 pickle.dump( [ebdy_dict, ebdyc_dict, f_full_dict, f_dict], open( "save.p", "wb" ) )
 
+# take the gradient of f
+fx, fy = ebdyc.gradient(f2)
+
+# plot fx, fy
+fig, [ax0, ax1] = plt.subplots(1,2)
+fx.plot(ax0, cmap=mpl.cm.jet)
+fy.plot(ax1, cmap=mpl.cm.jet)
+
 
 

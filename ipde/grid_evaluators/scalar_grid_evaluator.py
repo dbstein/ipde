@@ -1,9 +1,11 @@
-try:
-    import finufft
-    have_new_finufft = True
-except:
-    import finufftpy
-    have_new_finufft = False
+# still need to remove finufft dependency
+
+# try:
+#     import finufft
+#     have_new_finufft = True
+# except:
+#     import finufftpy
+#     have_new_finufft = False
 import numpy as np
 # from ipde.heavisides import SlepianMollifier
 from ipde.slepian.chebeval_bump_step import SlepianMollifier

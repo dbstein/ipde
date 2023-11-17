@@ -4,11 +4,13 @@ import matplotlib.pyplot as plt
 import pybie2d
 from ipde.embedded_boundary import EmbeddedBoundary
 from ipde.ebdy_collection import EmbeddedBoundaryCollection
+from ipde.embedded_function import EmbeddedFunction, BoundaryFunction
 from ipde.heavisides import SlepianMollifier
 from ipde.derivatives import fd_x_4, fd_y_4, fourier
 from ipde.solvers.multi_boundary.stokes import StokesSolver
-from qfs.two_d_qfs import QFS_Evaluator
+from qfs.stokes_qfs import Stokes_QFS
 from personal_utilities.arc_length_reparametrization import arc_length_parameterize
+
 squish = pybie2d.misc.curve_descriptions.squished_circle
 star = pybie2d.misc.curve_descriptions.star
 GSB = pybie2d.boundaries.global_smooth_boundary.global_smooth_boundary.Global_Smooth_Boundary
@@ -16,9 +18,10 @@ Grid = pybie2d.grid.Grid
 Stokes_Layer_Singular_Form = pybie2d.kernels.high_level.stokes.Stokes_Layer_Singular_Form
 Stokes_Layer_Form = pybie2d.kernels.high_level.stokes.Stokes_Layer_Form
 Stokes_Layer_Apply = pybie2d.kernels.high_level.stokes.Stokes_Layer_Apply
+BoundaryCollection = pybie2d.boundaries.collection.BoundaryCollection
 
-nb = 2000
-M = 20
+nb = 500
+M = 10
 pad_zone = 0
 verbose = True
 plot = True
@@ -46,7 +49,7 @@ ng = 2*int(0.5*7//bh)
 grid = Grid([-3.5, 3.5], ng, [-3.5, 3.5], ng, x_endpoints=[True, False], y_endpoints=[True, False])
 # construct embedded boundary
 bdys = [bdy1, bdy2, bdy3]
-ebdys = [EmbeddedBoundary(bdy, bdy is bdy1, M, bh, pad_zone, MOL.step) for bdy in bdys]
+ebdys = [EmbeddedBoundary(bdy, bdy is bdy1, M, bh, heaviside=MOL.step) for bdy in bdys]
 ebdyc = EmbeddedBoundaryCollection(ebdys)
 # register the grid
 print('\nRegistering the grid')
@@ -73,27 +76,30 @@ v_function  = lambda x, y: -a/b*cos(a*x)*psiy(x, y)
 p_function  = lambda x, y: cos(p_a*x) + esin(p_b*y)
 fu_function = lambda x, y: (a**2*(sin(a*x)-cos(a*x)**2) + b**2)*psix(x, y) - p_a*sin(p_a*x)
 fv_function = lambda x, y: -a*b*cos(a*x)*psiy(x, y)*(1 + (a/b)**2*sin(a*x)*(3+sin(a*x))) + p_b*cos(p_b*y)*esin(p_b*y)
-fu = fu_function(grid.xg, grid.yg)
-fv = fv_function(grid.xg, grid.yg)
-ua = u_function(grid.xg, grid.yg)
-va = v_function(grid.xg, grid.yg)
-fu_rs = [fu_function(ebdy.radial_x, ebdy.radial_y) for ebdy in ebdys]
-fv_rs = [fv_function(ebdy.radial_x, ebdy.radial_y) for ebdy in ebdys]
-ua_rs = [u_function(ebdy.radial_x, ebdy.radial_y) for ebdy in ebdys]
-va_rs = [v_function(ebdy.radial_x, ebdy.radial_y) for ebdy in ebdys]
-pa_rs = [p_function(ebdy.radial_x, ebdy.radial_y) for ebdy in ebdys]
-pa_rs = [pa_r - np.mean(pa_r) for pa_r in pa_rs]
-upper_u = np.concatenate([u_function(ebdy.bdy.x, ebdy.bdy.y) for ebdy in ebdys])
-upper_v = np.concatenate([v_function(ebdy.bdy.x, ebdy.bdy.y) for ebdy in ebdys])
+fu = EmbeddedFunction(ebdyc, function=fu_function)
+fv = EmbeddedFunction(ebdyc, function=fv_function)
+ua = EmbeddedFunction(ebdyc, function=u_function)
+va = EmbeddedFunction(ebdyc, function=v_function)
+pa = EmbeddedFunction(ebdyc, function=p_function)
+# demean pa
+area = EmbeddedFunction(ebdyc, function=lambda x, y: np.ones_like(x)).integrate()
+pa_mean = pa.integrate() / area
+pa -= pa_mean
+# gather boundaries
+bdys = BoundaryCollection()
+for ebdy in ebdyc:
+	bdys.add(ebdy.bdy, 'i' if ebdy.interior else 'e')
+bdys.amass_information()
+# get boundary conditions
+bdy_u = u_function(bdys.x, bdys.y)
+bdy_v = v_function(bdys.x, bdys.y)
 
 # setup the solver
 solver = StokesSolver(ebdyc, solver_type=solver_type)
-uc, vc, pc, urs, vrs = solver(fu, fv, fu_rs, fv_rs, tol=1e-12, verbose=verbose)
-ur = urs[0]
-vr = vrs[0]
+uc, vc, pc = solver(fu, fv, tol=1e-12, verbose=verbose)
 
 if plot:
-	mue = np.ma.array(uc, mask=ebdyc.ext)
+	mue = uc.get_grid_value(masked=True)
 	fig, ax = plt.subplots()
 	ax.pcolormesh(grid.xg, grid.yg, mue)
 
@@ -141,10 +147,10 @@ MATS[2][0][:] = d_only(bdy1, bdy3) + Stokes_Pressure_Fix(bdy1, bdy3)
 MATS[2][1][:] = c_and_d(bdy2, bdy3) + Stokes_Pressure_Fix(bdy2, bdy3)*0.0
 MATS[2][2][:] = cd_singular(bdy3) + half_eye(bdy3) + Stokes_Pressure_Fix(bdy3, bdy3)*0.0
 
-bu = solver.get_boundary_values(urs)
-bv = solver.get_boundary_values(vrs)
-bu_adj = upper_u - bu
-bv_adj = upper_v - bv
+bu = solver.get_boundary_values(uc)
+bv = solver.get_boundary_values(vc)
+bu_adj = bdy_u - bu
+bv_adj = bdy_v - bv
 bu_adj = ebdyc.v2l(bu_adj)
 bv_adj = ebdyc.v2l(bv_adj)
 bc_adj = np.concatenate([np.concatenate([bu_a, bv_a]) for bu_a, bv_a in zip(bu_adj, bv_adj)])
@@ -156,36 +162,36 @@ def v2f(x):
 
 # get effective sources
 qfs_list = []
-Naive_SLP = lambda src, trg: Stokes_Layer_Form(src, trg, ifforce=True)
-Fixed_SLP = lambda src, trg: Naive_SLP(src, trg) + Stokes_Pressure_Fix(src, trg)
 for ebdy in ebdys:
-	if ebdy.interior:
-		def Kernel_Function(src, trg):
-			return Stokes_Layer_Singular_Form(src, ifdipole=True) - 0.5*np.eye(2*src.N)
-	else:
-		def Kernel_Function(src, trg):
-			return Stokes_Layer_Singular_Form(src, ifdipole=True, ifforce=True) + 0.5*np.eye(2*src.N)
-	print(ebdy.interior)
-	qfs = QFS_Evaluator(ebdy.bdy_qfs, ebdy.interior, [Kernel_Function,], Fixed_SLP, on_surface=True, form_b2c=False, vector=True)
+	qfs = Stokes_QFS(ebdy.bdy, ebdy.interior, not ebdy.interior, True)
 	qfs_list.append(qfs)
 
-sigmal = [qfs([tau,]) for qfs, tau in zip(qfs_list, taul)]
+sigmal = []
+for qfs, tau in zip(qfs_list, taul):
+	sigmal.append(qfs([tau,tau] if qfs.interior else [tau,]))
 sigmav = np.column_stack([v2f(sigma) for sigma in sigmal])
+# collect sources
+sources = BoundaryCollection()
+for qfs in qfs_list:
+	sources.add(qfs.source, 'i' if qfs.interior else 'e')
+sources.amass_information()
 
-out = Stokes_Layer_Apply(ebdyc.bdy_inward_sources, ebdyc.grid_and_radial_pts, forces=sigmav)
-outu, outv = v2f(out)
-gslpu, rslplu = ebdyc.divide_grid_and_radial(outu)
-gslpv, rslplv = ebdyc.divide_grid_and_radial(outv)
+out = Stokes_Layer_Apply(sources, ebdyc.grid_and_radial_pts, forces=sigmav, out_type='stacked')
+uc += out[0]
+vc += out[1]
 
-uc[ebdyc.phys] += gslpu
-vc[ebdyc.phys] += gslpv
-for ur, rslp in zip(urs, rslplu):
-	ur += rslp
-for vr, rslp in zip(vrs, rslplv):
-	vr += rslp
+# gslpu, rslplu = ebdyc.divide_grid_and_radial(outu)
+# gslpv, rslplv = ebdyc.divide_grid_and_radial(outv)
+
+# uc[ebdyc.phys] += gslpu
+# vc[ebdyc.phys] += gslpv
+# for ur, rslp in zip(urs, rslplu):
+# 	ur += rslp
+# for vr, rslp in zip(vrs, rslplv):
+# 	vr += rslp
 
 if plot:
-	mue = np.ma.array(uc, mask=ebdyc.ext)
+	mue = uc.get_grid_value(masked=True)
 	fig, ax = plt.subplots()
 	clf = ax.pcolormesh(grid.xg, grid.yg, mue)
 	for ebdy in ebdys:
@@ -194,31 +200,23 @@ if plot:
 	plt.colorbar(clf)
 
 # compute the error
-u_r_errs = [np.abs(uer-uar).max() for uer, uar in zip(urs, ua_rs)]
-v_r_errs = [np.abs(ver-var).max() for ver, var in zip(vrs, va_rs)]
-u_gerr = np.abs(uc - ua)
-u_gerrp = u_gerr[ebdyc.phys]
-m_u_gerr = np.ma.array(u_gerr, mask=ebdyc.ext)
-v_gerr = np.abs(vc - va)
-v_gerrp = v_gerr[ebdyc.phys]
-m_v_gerr = np.ma.array(v_gerr, mask=ebdyc.ext)
+u_err = np.abs(uc - ua)
+v_err = np.abs(vc - va)
 
 if plot:
 	fig, ax = plt.subplots()
-	clf = ax.pcolormesh(grid.xg, grid.yg, m_u_gerr + 1e-15, norm=mpl.colors.LogNorm())
+	clf = ax.pcolormesh(grid.xg, grid.yg, u_err.get_grid_value(masked=True) + 1e-15, norm=mpl.colors.LogNorm())
 	for ebdy in ebdys:
 		ax.plot(ebdy.bdy.x, ebdy.bdy.y, color='black', linewidth=3)
 		ax.plot(ebdy.interface.x, ebdy.interface.y, color='white', linewidth=3)
 	plt.colorbar(clf)
 
 	fig, ax = plt.subplots()
-	clf = ax.pcolormesh(grid.xg, grid.yg, m_v_gerr + 1e-15, norm=mpl.colors.LogNorm())
+	clf = ax.pcolormesh(grid.xg, grid.yg, v_err.get_grid_value(masked=True) + 1e-15, norm=mpl.colors.LogNorm())
 	for ebdy in ebdys:
 		ax.plot(ebdy.bdy.x, ebdy.bdy.y, color='black', linewidth=3)
 		ax.plot(ebdy.interface.x, ebdy.interface.y, color='white', linewidth=3)
 	plt.colorbar(clf)
 
-print('Error, u, in grid:    {:0.2e}'.format(u_gerrp.max()))
-print('Error, v, in grid:    {:0.2e}'.format(v_gerrp.max()))
-print('Error, u, in annulus: {:0.2e}'.format(max(u_r_errs)))
-print('Error, v, in annulus: {:0.2e}'.format(max(v_r_errs)))
+print('Error, u {:0.2e}'.format(u_err.max()))
+print('Error, v {:0.2e}'.format(v_err.max()))

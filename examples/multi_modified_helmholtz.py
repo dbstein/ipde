@@ -18,7 +18,7 @@ MH_Layer_Apply = pybie2d.kernels.high_level.modified_helmholtz.Modified_Helmholt
 
 import time
 
-nb = 800
+nb = 400
 helmholtz_k = 5.0
 M = 20
 pad_zone = 0

@@ -1,15 +1,16 @@
 import numpy as np
 import pybie2d
-try:
-    import finufftpy
-    old_nufft = True
-except:
-    import finufft
-    old_nufft = False
+# try:
+#     import finufftpy
+#     old_nufft = True
+# except:
+#     import finufft
+#     old_nufft = False
 GSB = pybie2d.boundaries.global_smooth_boundary.global_smooth_boundary.Global_Smooth_Boundary
 PointSet = pybie2d.point_set.PointSet
 from near_finder.points_near_curve import gridpoints_near_curve_update, gridpoints_near_curve
 from near_finder.phys_routines import points_inside_curve
+from near_finder.nufft_interp2d import periodic_interp2d
 from ipde.slepian.chebeval_bump_step import SlepianMollifier
 from ipde.utilities import affine_transformation, get_chebyshev_nodes, SimpleFourierFilter
 # from qfs.two_d_qfs import QFS_Boundary
@@ -368,9 +369,12 @@ class EmbeddedBoundary(object):
         self.interpolation_hold[self.M:,:] = fr[::-1]
         funch = np.fft.fft2(self.interpolation_hold)*self.interpolation_modifier
         funch[self.M] = 0.0
-        out = np.empty(t.size, dtype=complex)
-        diagnostic = finufft.nufft2d2(transf_r, t, funch, out, isign=1, eps=1e-14, modeord=1)
-        vals = out.real/np.prod(funch.shape)
+        interpolater = periodic_interp2d(fh=funch)
+        out = interpolater(transf_r, t)
+        vals = out.real
+        # out = np.empty(t.size, dtype=complex)
+        # diagnostic = finufft.nufft2d2(transf_r, t, funch, out, isign=1, eps=1e-14, modeord=1)
+        # vals = out.real/np.prod(funch.shape)
         return vals
     def interpolate_radial_to_grid1(self, fr, f):
         """
